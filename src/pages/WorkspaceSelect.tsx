@@ -1,4 +1,4 @@
-import { ArrowRight, DatabaseZap, LockKeyhole, LogOut, ShieldCheck, UsersRound } from "lucide-react";
+import { ArrowRight, DatabaseZap, LockKeyhole, LogOut, Settings, ShieldCheck, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { roleLabel } from "../services/authService";
 import { useAuthStore } from "../store/authStore";
@@ -12,6 +12,7 @@ export default function WorkspaceSelect({ onEnter }: WorkspaceSelectProps) {
   const { currentUser, workspaces, selectWorkspace, logout, canEdit } = useAuthStore();
   if (!currentUser) return null;
 
+  const canManageWorkspace = currentUser.role === "admin" && currentUser.canManageWorkspace !== false;
   const adminWorkspace = workspaces.find((workspace) => workspace.id === ADMIN_PUBLIC_WORKSPACE_ID);
   const privateWorkspace = workspaces.find((workspace) => workspace.id === privateWorkspaceId(currentUser.id));
 
@@ -43,8 +44,8 @@ export default function WorkspaceSelect({ onEnter }: WorkspaceSelectProps) {
           <WorkspaceCard
             icon={<UsersRound className="h-5 w-5" />}
             title="管理员共享星图"
-            badge="只读共享"
-            detail="查看管理员维护的知识星图，可浏览资料、搜索节点、向 AI 提问，但不能修改内容。"
+            badge="共享只读"
+            detail="查看管理员维护的知识星图，可浏览资料、搜索节点、向 Copilot 提问，但不能修改共享内容。"
             meta={adminWorkspace ? `版本 v${adminWorkspace.version} · ${adminWorkspace.lastPublishedAt?.slice(0, 10) ?? "未发布"}` : "未初始化"}
             button="进入共享星图"
             onClick={() => enter(adminWorkspace)}
@@ -54,20 +55,20 @@ export default function WorkspaceSelect({ onEnter }: WorkspaceSelectProps) {
             icon={<LockKeyhole className="h-5 w-5" />}
             title="我的个人星图"
             badge="私有可编辑"
-            detail="创建或进入属于你的私人知识星图，上传资料并生成自己的知识结构。"
+            detail="进入只属于你的私人知识空间，上传资料、生成节点、保存成果，并持续沉淀个人知识资产。"
             meta={privateWorkspace ? "仅你可访问和编辑" : "即将创建个人空间"}
             button="进入我的星图"
             onClick={() => enter(privateWorkspace)}
           />
 
-          {currentUser.role === "admin" && (
+          {canManageWorkspace && (
             <WorkspaceCard
               icon={<ShieldCheck className="h-5 w-5" />}
-              title="主星图管理台"
+              title="主星图管理视图"
               badge="管理员"
-              detail="上传资料、更新节点、管理共享内容和发布星图。普通用户刷新后会看到最新共享内容。"
+              detail="维护共享星图、发布空间更新，并从顶部设置入口进入成员、访问、配置和日志后台。"
               meta={adminWorkspace ? `当前权限：${canEdit(adminWorkspace) ? "可编辑" : "只读"}` : "未初始化"}
-              button="进入管理台"
+              button="进入管理视图"
               strong
               onClick={() => enter(adminWorkspace)}
             />
@@ -77,12 +78,12 @@ export default function WorkspaceSelect({ onEnter }: WorkspaceSelectProps) {
         <div className="lux-card mt-6 rounded-3xl p-5">
           <div className="flex items-start gap-3">
             <span className="icon-tile">
-              <DatabaseZap className="h-5 w-5" />
+              {currentUser.role === "admin" ? <Settings className="h-5 w-5" /> : <DatabaseZap className="h-5 w-5" />}
             </span>
             <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)]">第一版权限说明</h2>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)]">空间与权限说明</h2>
               <p className="mt-2 text-sm leading-7 text-[var(--text-muted)]">
-                管理员共享星图由管理员维护。普通用户进入该空间时只能查看、搜索和提问；进入个人星图时可以上传、删除、清空和保存成果。当前为 Demo 会话，本地数据保存在浏览器 localStorage。
+                共享星图由管理员维护，普通用户可查看和提问；个人星图由当前用户独立管理。进入工作台后，顶部会持续显示当前角色、空间和权限状态。
               </p>
             </div>
           </div>

@@ -262,6 +262,7 @@ header {
 
 .topbar-right {
   justify-content: flex-end;
+  flex-wrap: nowrap;
 }
 
 .topbar-center .micro-card {
@@ -279,6 +280,24 @@ header {
 
 .ai-mode-glass {
   max-width: min(34vw, 26rem);
+}
+
+.workspace-badge {
+  max-width: 100%;
+}
+
+.workspace-badge.is-compact {
+  max-width: min(28vw, 24rem);
+  white-space: nowrap;
+}
+
+.workspace-badge.is-compact .workspace-name {
+  max-width: 13rem;
+}
+
+.workspace-badge.is-compact .role-chip,
+.workspace-badge.is-compact .permission-chip {
+  flex-shrink: 0;
 }
 
 .brand-pill,
@@ -355,6 +374,33 @@ header {
 .page-header {
   margin-bottom: 2rem;
   max-width: 56rem;
+}
+
+.auth-shell {
+  grid-auto-rows: min-content;
+}
+
+.auth-card {
+  align-self: center;
+  max-height: min(760px, calc(100vh - 5rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.dashboard-hero-grid {
+  align-items: stretch;
+}
+
+.dashboard-live-line {
+  animation: liquidPulse 3.6s var(--ease-liquid) infinite alternate;
+}
+
+.admin-metrics-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.admin-console-grid {
+  align-items: start;
 }
 
 .page-kicker,
@@ -776,6 +822,11 @@ header {
   flex: 0 0 auto;
 }
 
+.graph-detail-title {
+  max-height: 7.25rem;
+  overflow: hidden;
+}
+
 .graph-panel-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -787,11 +838,31 @@ header {
 }
 
 .graph-panel-footer {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  max-height: min(19.5rem, 42%);
   margin-top: 0.85rem;
   padding-top: 0.85rem;
   border-top: 1px solid var(--border-subtle);
   background: linear-gradient(180deg, rgba(5, 9, 18, 0), rgba(5, 9, 18, 0.24));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(158, 202, 218, 0.22) transparent;
+  padding-right: 0.25rem;
+}
+
+.graph-panel-footer::-webkit-scrollbar {
+  width: 5px;
+}
+
+.graph-panel-footer::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(183, 247, 255, 0.24);
+}
+
+.node-action-grid {
+  grid-template-columns: 1fr;
 }
 
 .graph-section {
@@ -845,6 +916,14 @@ header {
   padding: 0.72rem;
 }
 
+.source-snippet-text {
+  display: block;
+  max-height: 6.2rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
 .thin-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(158, 202, 218, 0.28) transparent;
@@ -889,6 +968,23 @@ header {
   .ai-mode-glass {
     max-width: 18rem;
   }
+
+  .topbar-left .nav-glass {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .topbar-left .nav-glass::-webkit-scrollbar {
+    display: none;
+  }
+
+  .workspace-badge.is-compact {
+    max-width: 18rem;
+  }
+
+  .admin-metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1279px) {
@@ -915,6 +1011,18 @@ header {
 
   .graph-side-panel {
     height: min(680px, 72vh);
+  }
+
+  .graph-panel-footer {
+    max-height: 16rem;
+  }
+
+  .dashboard-hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -944,6 +1052,7 @@ header {
   .topbar-right {
     justify-content: space-between;
     width: 100%;
+    flex-wrap: wrap;
   }
 
   .topbar-right .ai-mode-glass {
@@ -953,6 +1062,24 @@ header {
   .page-shell {
     width: min(100vw - 1.25rem, 1500px);
     padding-top: 1.25rem;
+  }
+
+  .auth-shell {
+    min-height: auto;
+  }
+
+  .auth-card {
+    max-height: none;
+  }
+
+  .admin-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-badge,
+  .workspace-badge.is-compact {
+    max-width: 100%;
+    flex-wrap: wrap;
   }
 }
 
@@ -1035,6 +1162,15 @@ header {
   }
   to {
     background-position: 32px 32px, -32px 24px, 112px 56px;
+  }
+}
+
+@keyframes liquidPulse {
+  from {
+    box-shadow: 0 0 18px rgba(121, 231, 242, 0.045), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  }
+  to {
+    box-shadow: 0 0 32px rgba(121, 231, 242, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.075);
   }
 }
 

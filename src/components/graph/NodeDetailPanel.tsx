@@ -113,29 +113,31 @@ export default function NodeDetailPanel({
       transition={{ duration: 0.42, ease: "easeOut" }}
       className="knowledge-graph-frame graph-side-panel lux-card workbench-panel min-w-0 flex-col rounded-3xl p-4"
     >
-      <div className="graph-panel-header">
+      <div className="graph-panel-header graph-detail-title">
         <div className="flex items-start gap-3">
           <span className="mt-1 h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: meta.color, boxShadow: `0 0 20px ${meta.glow}` }} />
           <div className="min-w-0">
             <p className="text-sm text-[var(--text-faint)]">{meta.label}节点</p>
-            <h2 className="mt-1 break-words text-2xl font-semibold text-[var(--text-primary)]">{node.label}</h2>
-            <p className="mt-2 line-clamp-3 text-sm leading-6 text-[var(--text-muted)]">{node.description}</p>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <div className="micro-card graph-compact-card">
-            <p className="text-xs text-[var(--text-faint)]">可信度</p>
-            <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{Math.round((node.confidence ?? 0.86) * 100)}%</p>
-          </div>
-          <div className="micro-card graph-compact-card">
-            <p className="text-xs text-[var(--text-faint)]">直接连接</p>
-            <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{neighbors.length}</p>
+            <h2 className="mt-1 line-clamp-2 break-words text-xl font-semibold text-[var(--text-primary)]">{node.label}</h2>
           </div>
         </div>
       </div>
 
       <div className="graph-panel-scroll thin-scrollbar mt-4">
+        <DetailSection title="基础信息" icon={<Sparkles className="h-4 w-4 text-[var(--accent)]" />} defaultOpen>
+          <p className="text-sm leading-6 text-[var(--text-muted)]">{node.description || "当前节点暂无补充说明。"}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="micro-card graph-compact-card">
+              <p className="text-xs text-[var(--text-faint)]">可信度</p>
+              <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{Math.round((node.confidence ?? 0.86) * 100)}%</p>
+            </div>
+            <div className="micro-card graph-compact-card">
+              <p className="text-xs text-[var(--text-faint)]">直接连接</p>
+              <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{neighbors.length}</p>
+            </div>
+          </div>
+        </DetailSection>
+
         <DetailSection title="关联文件" icon={<FileText className="h-4 w-4 text-[var(--accent)]" />} defaultOpen>
           <div className="space-y-2">
             {relatedDocuments.slice(0, 5).map((document) => (
@@ -172,13 +174,13 @@ export default function NodeDetailPanel({
                   <span className="text-sm text-[var(--text-secondary)]">{edge.label ?? edge.relationType}</span>
                   <span className="text-xs text-[var(--text-faint)]">{Math.round((edge.confidence ?? 0.8) * 100)}%</span>
                 </div>
-                <p className="mt-2 line-clamp-3 text-xs leading-5 text-[var(--text-faint)]">{edge.evidence}</p>
+                <p className="source-snippet-text thin-scrollbar mt-2 text-xs leading-5 text-[var(--text-faint)]">{edge.evidence}</p>
               </div>
             ))}
             {sourceSnippets.slice(0, 6).map(({ document, chunk }) => (
               <div key={`${document.id}-${chunk.id}`} className="rounded-2xl border border-[var(--accent-border)] bg-[var(--accent-soft)] p-3">
                 <p className="truncate text-xs font-medium text-[var(--accent)]">{document.title}</p>
-                <p className="mt-2 line-clamp-3 text-xs leading-5 text-[var(--text-secondary)]">{chunk.text}</p>
+                <p className="source-snippet-text thin-scrollbar mt-2 text-xs leading-5 text-[var(--text-secondary)]">{chunk.text}</p>
               </div>
             ))}
             {edges.length === 0 && sourceSnippets.length === 0 && <p className="text-sm leading-6 text-[var(--text-faint)]">当前节点没有可用来源片段。若文件正文解析失败，Copilot 会拒绝生成可靠回答。</p>}
@@ -191,7 +193,7 @@ export default function NodeDetailPanel({
           <Sparkles className="h-4 w-4" />
           节点操作
         </div>
-        <div className="grid gap-2">
+        <div className="node-action-grid grid gap-2">
           {[
             ["基于该节点提问", "ask", Bot],
             ["总结该节点", "summary", Sparkles],

@@ -1,10 +1,11 @@
 import { BarChart3, Boxes, CheckCircle2, FileText, Globe2, Network, Search, Sparkles, type LucideIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AIRecommendationCard from "../components/dashboard/AIRecommendationCard";
 import StatCard from "../components/dashboard/StatCard";
-import WorkspaceBadge from "../components/common/WorkspaceBadge";
 import AiModeBadge from "../components/common/AiModeBadge";
+import WorkspaceBadge from "../components/common/WorkspaceBadge";
 import { useAiStatus } from "../store/aiStatusStore";
+import { useAuthStore } from "../store/authStore";
 import { useKnowledgeStore } from "../store/knowledgeStore";
 import { getGraphCounts } from "../utils/graphUtils";
 
@@ -15,39 +16,59 @@ interface DashboardProps {
 }
 
 const dynamicWords = ["资料", "项目", "技术", "问题", "成果"];
+const heroLines = [
+  "上传资料，生成可追溯知识星图",
+  "让 AI 基于你的文件回答问题",
+  "把项目、技术和成果串联起来",
+  "管理共享知识空间，服务更多用户",
+];
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
   const { state, canEditCurrentWorkspace } = useKnowledgeStore();
+  const { currentUser, metrics } = useAuthStore();
   const { status: aiStatus } = useAiStatus();
   const [wordIndex, setWordIndex] = useState(0);
+  const [lineIndex, setLineIndex] = useState(0);
   const counts = getGraphCounts(state.graph);
   const latestDocument = state.documents[0] ?? null;
   const answerableDocuments = state.documents.filter((document) => document.canAnswer);
   const chunkCount = answerableDocuments.reduce((sum, document) => sum + document.chunks.length, 0);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setWordIndex((index) => (index + 1) % dynamicWords.length), 1700);
+    const timer = window.setInterval(() => {
+      setWordIndex((index) => (index + 1) % dynamicWords.length);
+      setLineIndex((index) => (index + 1) % heroLines.length);
+    }, 2600);
     return () => window.clearInterval(timer);
   }, []);
 
+  const liveItems = useMemo(
+    () => [
+      latestDocument ? `最近导入：${latestDocument.title}` : "等待导入第一份资料",
+      `星图节点：${counts.nodeCount} · 关系：${counts.edgeCount}`,
+      `可问答片段：${chunkCount}`,
+      `AI 状态：${aiStatus.summary}`,
+    ],
+    [aiStatus.summary, chunkCount, counts.edgeCount, counts.nodeCount, latestDocument],
+  );
+
   return (
     <div className="page-shell fade-in">
-      <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_500px] lg:items-center">
+      <section className="dashboard-hero-grid grid gap-8 lg:grid-cols-[minmax(0,1fr)_500px] lg:items-center">
         <div className="relative">
-          <p className="page-kicker">
-            AI 个人知识图谱工作台
-          </p>
+          <p className="page-kicker">AI 个人知识图谱工作台</p>
           <h1 className="page-title">
             知脉 AI
             <span className="block text-[var(--text-secondary)]">把资料沉淀成可追溯知识星图</span>
           </h1>
+          <p className="dashboard-live-line mt-5 inline-flex rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-4 py-2 text-sm text-[var(--accent)]">
+            {heroLines[lineIndex]}
+          </p>
           <p className="page-subtitle">
             上传文档、项目和笔记后，系统会抽取节点、关系和来源，让问答、总结和成果生成都有依据。
           </p>
-          <div className="mt-5">
+          <div className="mt-5 flex flex-wrap gap-3">
             <WorkspaceBadge />
-          </div>
-          <div className="mt-3">
             <AiModeBadge compact />
           </div>
           <p className="liquid-action mt-5 inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-secondary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
@@ -64,16 +85,15 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             </button>
             <button type="button" onClick={() => onNavigate(canEditCurrentWorkspace ? "upload" : "assistant")} className="btn-secondary">
               <FileText className="h-4 w-4" />
-              导入资料
+              {canEditCurrentWorkspace ? "导入资料" : "向 Copilot 提问"}
             </button>
           </div>
-          <div className="micro-card hover-lift mt-6 max-w-xl p-4">
-            <p className="text-xs text-[var(--text-faint)]">最近状态</p>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-              {latestDocument
-                ? `最近入库：${latestDocument.title}。${latestDocument.canAnswer ? `已生成 ${latestDocument.chunks.length} 个可问答片段。` : latestDocument.parseMessage}`
-                : "还没有上传资料。先导入一份项目文档，生成第一组知识节点。"}
-            </p>
+          <div className="mt-6 grid max-w-2xl gap-2 sm:grid-cols-2">
+            {liveItems.map((item) => (
+              <div key={item} className="micro-card px-4 py-3 text-xs text-[var(--text-muted)]">
+                {item}
+              </div>
+            ))}
           </div>
         </div>
 
@@ -93,12 +113,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               <div className="mt-5 grid gap-3">
                 {state.graph.nodes.length > 0 ? (
                   state.graph.nodes.slice(0, 5).map((node, index) => (
-                    <button
-                      key={node.id}
-                      type="button"
-                      onClick={() => onNavigate("graph")}
-                      className="group micro-card hover-lift flex items-center gap-3 p-3 text-left"
-                    >
+                    <button key={node.id} type="button" onClick={() => onNavigate("graph")} className="group micro-card hover-lift flex items-center gap-3 p-3 text-left">
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--accent)] shadow-[0_0_18px_var(--glow-accent)]" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-[var(--text-primary)]">{node.label}</span>
@@ -108,12 +123,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                     </button>
                   ))
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => onNavigate("upload")}
-                    className="empty-orbit rounded-2xl p-5 text-left text-sm leading-7 text-[var(--accent)]"
-                  >
-                    还没有上传资料。先导入一份项目文档，生成第一组知识节点。
+                  <button type="button" onClick={() => onNavigate(canEditCurrentWorkspace ? "upload" : "assistant")} className="empty-orbit rounded-2xl p-5 text-left text-sm leading-7 text-[var(--accent)]">
+                    当前空间还没有资料。导入一份文档后，系统会生成第一组知识节点和来源片段。
                   </button>
                 )}
               </div>
@@ -122,14 +133,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <div className="grid gap-4 sm:grid-cols-2">
               <PreviewCard icon={CheckCircle2} label="AI 分析状态" value={aiStatus.summary} detail={`${chunkCount} 个来源片段，${answerableDocuments.length} 份资料可问答`} />
               <PreviewCard icon={FileText} label="最近上传文件" value={latestDocument?.title ?? "暂无资料"} detail={latestDocument?.parseMessage ?? "导入后自动检测正文质量"} />
-              <PreviewCard icon={Search} label="来源引用" value={`${answerableDocuments.length} 份可问答`} detail="本地片段和网页来源分开显示" />
+              <PreviewCard icon={Search} label="访问 / 登录" value={`${metrics.totalVisits} / ${metrics.loginCount}`} detail={`当前用户：${currentUser?.username ?? "未登录"}`} />
               <PreviewCard icon={Globe2} label="联网 / OCR" value={aiStatus.searchEnabled ? `搜索 ${aiStatus.searchProvider}` : "搜索未配置"} detail={aiStatus.ocrEnabled ? "OCR 已开启" : "OCR 未配置，仅影响扫描件识别"} />
             </div>
           </div>
         </div>
       </section>
 
-      <section className="py-12 md:py-16">
+      <section className="py-12 md:py-14">
         <div className="grid grid-flow-dense gap-4 md:grid-cols-12">
           <div className="md:col-span-3">
             <StatCard label="已导入资料" value={`${state.documents.length}`} detail="PDF、Word、笔记和项目资料" icon={FileText} />
@@ -165,12 +176,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           <div className="space-y-3">
             {state.documents.length > 0 ? (
               state.documents.slice(0, 5).map((document) => (
-                <button
-                  key={document.id}
-                  type="button"
-                  onClick={() => onNavigate("graph")}
-                  className="group micro-card hover-lift w-full p-4 text-left"
-                >
+                <button key={document.id} type="button" onClick={() => onNavigate("graph")} className="group micro-card hover-lift w-full p-4 text-left">
                   <div className="flex items-center justify-between gap-4">
                     <span className="truncate text-sm font-medium text-[var(--text-primary)]">{document.title}</span>
                     <span className="shrink-0 text-xs text-[var(--text-faint)]">{document.uploadedAt}</span>

@@ -19,16 +19,37 @@ export const demoUsers: AuthUserRecord[] = [
     id: ADMIN_USER_ID,
     username: "admin",
     email: "admin@zhimai.local",
+    password: "123456",
     role: "admin",
+    status: "active",
     createdAt: now,
+    lastActiveAt: now,
+    lastIp: "local-session",
+    online: false,
+    enabled: true,
+    canManageWorkspace: true,
+    canAccessAdminPanel: true,
+    canEditAdminGraph: true,
+    loginCount: 0,
+    mustChangePassword: true,
     isDemo: true,
   },
   {
     id: "user_default",
     username: "user",
     email: "user@zhimai.local",
+    password: "123456",
     role: "user",
+    status: "active",
     createdAt: now,
+    lastActiveAt: now,
+    lastIp: "local-session",
+    online: false,
+    enabled: true,
+    canManageWorkspace: false,
+    canAccessAdminPanel: false,
+    canEditAdminGraph: false,
+    loginCount: 0,
     isDemo: true,
   },
 ];
@@ -43,7 +64,7 @@ export function createAdminWorkspace(): Workspace {
     createdAt: now,
     updatedAt: now,
     lastPublishedAt: now,
-    description: "由管理员维护的主知识星图，普通用户可查看、搜索和提问。",
+    description: "由管理员维护的主知识星图，普通用户可查看、搜索和向 Copilot 提问。",
     version: 1,
     updateSummary: "初始化共享知识空间。",
   };
@@ -71,7 +92,7 @@ export function toPublicUser(user: AuthUserRecord): ZhimaiUser {
 
 export function canReadWorkspace(user: ZhimaiUser | null, workspace: Workspace | null) {
   if (!user || !workspace) return false;
-  if (user.role === "admin" && workspace.visibility === "public") return true;
+  if (user.role === "admin" && user.canAccessAdminPanel !== false && workspace.visibility === "public") return true;
   if (workspace.type === "admin_public") return true;
   if (workspace.type === "demo_public") return true;
   return workspace.ownerId === user.id;
@@ -79,7 +100,7 @@ export function canReadWorkspace(user: ZhimaiUser | null, workspace: Workspace |
 
 export function canEditWorkspace(user: ZhimaiUser | null, workspace: Workspace | null) {
   if (!user || !workspace) return false;
-  if (user.role === "admin" && workspace.type === "admin_public") return true;
+  if (user.role === "admin" && user.canEditAdminGraph !== false && workspace.type === "admin_public") return true;
   return workspace.type === "user_private" && workspace.ownerId === user.id;
 }
 

@@ -1,19 +1,21 @@
-import { Bot, DatabaseZap, FileUp, GitBranch, Home, Layers3, LogOut, Sparkles, UsersRound, type LucideIcon } from "lucide-react";
+import { Bot, DatabaseZap, FileUp, GitBranch, Home, Layers3, LogOut, Settings, Sparkles, UsersRound, type LucideIcon } from "lucide-react";
 import { useMemo, useState, type CSSProperties } from "react";
 import AiModeBadge from "./components/common/AiModeBadge";
 import WorkspaceBadge from "./components/common/WorkspaceBadge";
+import AdminSettings from "./pages/AdminSettings";
 import Assistant from "./pages/Assistant";
 import Dashboard from "./pages/Dashboard";
 import Graph from "./pages/Graph";
 import Login from "./pages/Login";
 import Outputs from "./pages/Outputs";
+import Register from "./pages/Register";
 import Upload from "./pages/Upload";
 import WorkspaceSelect from "./pages/WorkspaceSelect";
 import { useAuthStore } from "./store/authStore";
 import { useKnowledgeStore } from "./store/knowledgeStore";
 import { cn } from "./utils/cn";
 
-type PageKey = "dashboard" | "upload" | "graph" | "assistant" | "outputs";
+type PageKey = "dashboard" | "upload" | "graph" | "assistant" | "outputs" | "settings";
 
 const navItems: Array<{ key: PageKey; label: string; icon: LucideIcon }> = [
   { key: "dashboard", label: "工作台", icon: Home },
@@ -25,9 +27,11 @@ const navItems: Array<{ key: PageKey; label: string; icon: LucideIcon }> = [
 
 function App() {
   const [page, setPage] = useState<PageKey>("dashboard");
+  const [authPage, setAuthPage] = useState<"login" | "register">("login");
   const [pointer, setPointer] = useState({ x: 50, y: 12 });
   const { currentUser, currentWorkspace, logout, clearWorkspaceSelection } = useAuthStore();
   const { canEditCurrentWorkspace } = useKnowledgeStore();
+  const canAccessAdminPanel = currentUser?.role === "admin" && currentUser.canAccessAdminPanel !== false;
 
   const availableNavItems = navItems.filter((item) => canEditCurrentWorkspace || (item.key !== "upload" && item.key !== "outputs"));
 
@@ -41,12 +45,16 @@ function App() {
         return <Assistant />;
       case "outputs":
         return <Outputs />;
+      case "settings":
+        return canAccessAdminPanel ? <AdminSettings /> : <Dashboard onNavigate={setPage} />;
       default:
         return <Dashboard onNavigate={setPage} />;
     }
-  }, [canEditCurrentWorkspace, page]);
+  }, [canAccessAdminPanel, canEditCurrentWorkspace, page]);
 
-  if (!currentUser) return <Login />;
+  if (!currentUser) {
+    return authPage === "register" ? <Register onLogin={() => setAuthPage("login")} /> : <Login onRegister={() => setAuthPage("register")} />;
+  }
   if (!currentWorkspace) return <WorkspaceSelect onEnter={() => setPage("dashboard")} />;
 
   return (
@@ -115,6 +123,12 @@ function App() {
               <UsersRound className="h-4 w-4" />
               <span className="hidden xl:inline">空间</span>
             </button>
+            {canAccessAdminPanel && (
+              <button type="button" onClick={() => setPage("settings")} className="btn-secondary px-3 py-2" title="设置 / 管理后台">
+                <Settings className="h-4 w-4" />
+                <span className="hidden xl:inline">设置</span>
+              </button>
+            )}
             <button type="button" onClick={logout} className="btn-secondary px-3 py-2" title="退出登录">
               <LogOut className="h-4 w-4" />
             </button>
