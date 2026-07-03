@@ -1,0 +1,246 @@
+import { useEffect, useMemo, useState } from "react";
+import GraphSidebar from "../components/graph/GraphSidebar";
+import KnowledgeGraph from "../components/graph/KnowledgeGraph";
+import NodeDetailPanel from "../components/graph/NodeDetailPanel";
+import { getVisibleGraph, type GraphMode } from "../services/graphService";
+import { useKnowledgeStore } from "../store/knowledgeStore";
+import type { GraphNode, GraphNodeType, SourceReference } from "../types/graph";
+import { getConnectedEdges, getNeighborIds, getNodeById, searchGraphNodes } from "../utils/graphUtils";
+
+const allTypes: GraphNodeType[] = ["project", "document", "tech", "problem", "output", "tag", "concept"];
+
+interface GraphProps {
+  onOpenAssistant: () => void;
+}
+
+export default function Graph({ onOpenAssistant }: GraphProps) {
+  const { state, deleteNode, deleteDocument, clearGraph, setCopilotContext } = useKnowledgeStore();
+  const [activeTypes, setActiveTypes] = useState<GraphNodeType[]>(allTypes);
+  const [mode, setMode] = useState<GraphMode>("global");
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [scopeNodeId, setScopeNodeId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [generatedToast, setGeneratedToast] = useState<string | null>(null);
+  const [quickFilter, setQuickFilter] = useState<"recent" | "selectedDocument" | "outputs" | "problems" | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ nodeId: string; version: number } | null>(null);
+
+  const baseGraph = state.graph;
+  const selectedDocumentIdForFilter = quickFilter === "selectedDocument" ? selectedNode?.sourceDocumentIds?.[0] : undefined;
+  const visibleGraph = useMemo(() => {
+    const modeGraph = getVisibleGraph(mode, activeTypes, scopeNodeId, baseGraph);
+    if (!quickFilter) return modeGraph;
+    const latestDocumentId = state.documents[0]?.id;
+    const predicate = (node: GraphNode) => {
+      if (quickFilter === "recent") return Boolean(latestDocumentId && node.sourceDocumentIds?.includes(latestDocumentId));
+      if (quickFilter === "selectedDocument") return Boolean(selectedDocumentIdForFilter && node.sourceDocumentIds?.includes(selectedDocumentIdForFilter));
+      if (quickFilter === "outputs") return node.type === "output";
+      if (quickFilter === "problems") return node.type === "problem";
+      return true;
+    };
+    const nodes = modeGraph.nodes.filter(predicate);
+    const ids = new Set(nodes.map((node) => node.id));
+    const edges = modeGraph.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
+    return { nodes, edges };
+  }, [mode, activeTypes, scopeNodeId, baseGraph, quickFilter, state.documents, selectedDocumentIdForFilter]);
+
+  const searchResults = useMemo(() => searchGraphNodes(baseGraph.nodes, search, state.documents), [baseGraph.nodes, search, state.documents]);
+
+  const neighbors = useMemo(() => {
+    if (!selectedNode) return [];
+    return [...getNeighborIds(selectedNode.id, baseGraph.edges)]
+      .map((id) => getNodeById(baseGraph.nodes, id))
+      .filter((node): node is GraphNode => Boolean(node));
+  }, [baseGraph.edges, baseGraph.nodes, selectedNode]);
+
+  const connectedEdges = useMemo(() => (selectedNode ? getConnectedEdges(selectedNode.id, baseGraph.edges) : []), [baseGraph.edges, selectedNode]);
+
+  useEffect(() => {
+    if (!selectedNode) return;
+    if (!baseGraph.nodes.some((node) => node.id === selectedNode.id)) setSelectedNode(null);
+  }, [baseGraph.nodes, selectedNode]);
+
+  useEffect(() => {
+    if (!search.trim()) return;
+    setSearchError(searchResults.length === 0 ? `未找到包含「${search}」的节点，可尝试搜索资料名、摘要或技术关键词。` : null);
+  }, [search, searchResults.length]);
+
+  function nodeSourceSnippets(node: GraphNode | null): SourceReference[] {
+    if (!node) return [];
+    const documentIds = new Set(node.sourceDocumentIds ?? []);
+    return state.documents
+      .filter((document) => documentIds.has(document.id))
+      .flatMap((document) =>
+        document.chunks.slice(0, 3).map<SourceReference>((chunk) => ({
+          sourceType: "local",
+          documentId: document.id,
+          documentTitle: document.title,
+          snippet: chunk.text,
+          score: document.confidence,
+          nodeId: node.id,
+          nodeLabel: node.label,
+          chunkId: chunk.id,
+          isParsed: document.canAnswer,
+        })),
+      );
+  }
+
+  function toggleType(type: GraphNodeType) {
+    setActiveTypes((current) => {
+      if (current.includes(type)) return current.length === 1 ? allTypes : current.filter((item) => item !== type);
+      return [...current, type];
+    });
+  }
+
+  function handleSelectSearchResult(nodeId: string) {
+    const node = getNodeById(baseGraph.nodes, nodeId);
+    if (!node) return;
+    if (!activeTypes.includes(node.type)) setActiveTypes((current) => [...new Set([...current, node.type])]);
+    setSelectedNode(node);
+    setSearchError(null);
+    setFocusRequest({ nodeId, version: Date.now() });
+  }
+
+  function handleQuickFilter(filter: "recent" | "selectedDocument" | "outputs" | "problems" | null) {
+    setQuickFilter(filter);
+    if (filter === "outputs") setActiveTypes(["output"]);
+    if (filter === "problems") setActiveTypes(["problem"]);
+    if (filter === "recent" || filter === "selectedDocument" || filter === null) setActiveTypes(allTypes);
+  }
+
+  function handleClearGraph() {
+    if (!window.confirm("确认清空当前知识星图、资料记录和成果节点吗？此操作不可撤销。")) return;
+    clearGraph();
+    setMode("global");
+    setScopeNodeId(null);
+    setSelectedNode(null);
+    setSearch("");
+    setSearchError(null);
+    setGeneratedToast("已清空知识星图，可重新导入第一份资料。");
+    window.setTimeout(() => setGeneratedToast(null), 2600);
+  }
+
+  function handleDeleteDocument(documentId: string) {
+    const document = state.documents.find((item) => item.id === documentId);
+    if (!document) return;
+    if (!window.confirm(`确认删除资料「${document.title}」及其专属节点关系吗？`)) return;
+    deleteDocument(documentId);
+    setSelectedNode(null);
+    setGeneratedToast(`已删除资料「${document.title}」并重新组织星图。`);
+    window.setTimeout(() => setGeneratedToast(null), 2600);
+  }
+
+  function handleDeleteNode() {
+    if (!selectedNode) return;
+    if (!window.confirm(`确认删除节点「${selectedNode.label}」及相关关系边吗？`)) return;
+    deleteNode(selectedNode.id);
+    setSelectedNode(null);
+    setGeneratedToast(`已删除节点「${selectedNode.label}」。`);
+    window.setTimeout(() => setGeneratedToast(null), 2600);
+  }
+
+  function openCopilot(intent: "ask" | "summary" | "generate" | "analyze" | "web") {
+    if (!selectedNode) return;
+    setCopilotContext({
+      nodeId: selectedNode.id,
+      nodeLabel: selectedNode.label,
+      nodeType: selectedNode.type,
+      summary: selectedNode.description,
+      relatedDocumentIds: selectedNode.sourceDocumentIds ?? [],
+      sourceSnippets: nodeSourceSnippets(selectedNode),
+      neighborLabels: neighbors.map((node) => node.label),
+      intent,
+      answerMode: intent === "web" ? "web" : "hybrid",
+    });
+    onOpenAssistant();
+  }
+
+  return (
+    <div className="mx-auto max-w-[1680px] px-3 py-6 md:px-6 md:py-8 fade-in">
+      <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+        <div>
+          <p className="page-kicker">Obsidian Global Graph · 个人知识宇宙</p>
+          <h1 className="page-title-compact">知脉星图</h1>
+          <p className="page-subtitle">
+            把资料、项目、问题、技术点和成果组织为可追溯的个人知识星图。点击节点只更新高亮、来源和右侧详情，不会自动放大画布。
+          </p>
+        </div>
+        <div className="liquid-action rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-4 py-2 text-sm text-[var(--accent)]">
+          {baseGraph.nodes.length} 节点 · {baseGraph.edges.length} 关系 · {state.documents.length} 资料
+        </div>
+      </div>
+
+      <div className="graph-workspace-grid grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_300px] 2xl:grid-cols-[320px_minmax(680px,1fr)_360px]">
+        <GraphSidebar
+          activeTypes={activeTypes}
+          mode={mode}
+          search={search}
+          searchError={searchError}
+          documents={state.documents}
+          searchResults={searchResults}
+          quickFilter={quickFilter}
+          stats={{ nodeCount: visibleGraph.nodes.length, edgeCount: visibleGraph.edges.length, highlightedLabel: selectedNode?.label }}
+          onSearchChange={(value) => {
+            setSearch(value);
+            setSearchError(null);
+          }}
+          onSelectSearchResult={handleSelectSearchResult}
+          onTypeToggle={toggleType}
+          onSelectAllTypes={() => setActiveTypes(allTypes)}
+          onSelectNoTypes={() => setActiveTypes([])}
+          onInvertTypes={() => setActiveTypes(allTypes.filter((type) => !activeTypes.includes(type)))}
+          onQuickFilter={handleQuickFilter}
+          onModeChange={(nextMode) => {
+            setMode(nextMode);
+            setScopeNodeId(nextMode === "global" ? null : (selectedNode?.id ?? scopeNodeId));
+          }}
+          onReset={() => {
+            setMode("global");
+            setScopeNodeId(null);
+            setActiveTypes(allTypes);
+            setSelectedNode(null);
+            setSearch("");
+            setSearchError(null);
+          }}
+          onClearGraph={handleClearGraph}
+          onDeleteDocument={handleDeleteDocument}
+        />
+        <KnowledgeGraph
+          data={visibleGraph}
+          selectedNodeId={selectedNode?.id ?? null}
+          searchQuery={search}
+          focusRequest={focusRequest}
+          onSelectNode={(node) => {
+            setSelectedNode(node);
+            setSearchError(null);
+          }}
+          onSearchMiss={(query) => setSearchError(`未找到包含「${query}」的节点。`)}
+          onSwitchLocal={(nodeId) => {
+            setScopeNodeId(nodeId);
+            setMode("local");
+          }}
+        />
+        <NodeDetailPanel
+          node={selectedNode}
+          neighbors={neighbors}
+          edges={connectedEdges}
+          documents={state.documents}
+          outputs={state.outputs}
+          recommendations={state.recommendations}
+          onGenerate={(kind) => {
+            setGeneratedToast(`已带入「${selectedNode?.label ?? "当前节点"}」上下文，前往知源 Copilot 生成${kind}。`);
+            openCopilot("generate");
+            window.setTimeout(() => setGeneratedToast(null), 1800);
+          }}
+          onAskNode={openCopilot}
+          onDeleteNode={handleDeleteNode}
+        />
+      </div>
+      {generatedToast && (
+        <div className="toast-glass fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full border border-[var(--accent-border)] px-5 py-3 text-sm text-[var(--accent)] backdrop-blur-xl">
+          {generatedToast}
+        </div>
+      )}
+    </div>
+  );
+}

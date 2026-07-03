@@ -1,0 +1,203 @@
+import { BarChart3, Boxes, CheckCircle2, FileText, Globe2, Network, Search, Sparkles, type LucideIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import AIRecommendationCard from "../components/dashboard/AIRecommendationCard";
+import StatCard from "../components/dashboard/StatCard";
+import { useKnowledgeStore } from "../store/knowledgeStore";
+import { getGraphCounts } from "../utils/graphUtils";
+
+type Destination = "dashboard" | "upload" | "graph" | "assistant" | "outputs";
+
+interface DashboardProps {
+  onNavigate: (page: Destination) => void;
+}
+
+const dynamicWords = ["资料", "项目", "技术", "问题", "成果"];
+
+export default function Dashboard({ onNavigate }: DashboardProps) {
+  const { state } = useKnowledgeStore();
+  const [wordIndex, setWordIndex] = useState(0);
+  const counts = getGraphCounts(state.graph);
+  const latestDocument = state.documents[0] ?? null;
+  const answerableDocuments = state.documents.filter((document) => document.canAnswer);
+  const chunkCount = answerableDocuments.reduce((sum, document) => sum + document.chunks.length, 0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setWordIndex((index) => (index + 1) % dynamicWords.length), 1700);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="page-shell fade-in">
+      <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_500px] lg:items-center">
+        <div className="relative">
+          <p className="page-kicker">
+            AI 个人知识图谱工作台
+          </p>
+          <h1 className="page-title">
+            知脉 AI
+            <span className="block text-[var(--text-secondary)]">把资料沉淀成可追溯知识星图</span>
+          </h1>
+          <p className="page-subtitle">
+            上传文档、项目和笔记后，系统会抽取节点、关系和来源，让问答、总结和成果生成都有依据。
+          </p>
+          <p className="liquid-action mt-5 inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-secondary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+            把你的
+            <span className="inline-flex min-w-[4.2em] justify-center rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-3 py-1 font-semibold text-[var(--accent)]">
+              {dynamicWords[wordIndex]}
+            </span>
+            变成知识资产
+          </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <button type="button" onClick={() => onNavigate("graph")} className="btn-primary">
+              <Network className="h-4 w-4" />
+              进入知识星图
+            </button>
+            <button type="button" onClick={() => onNavigate("upload")} className="btn-secondary">
+              <FileText className="h-4 w-4" />
+              导入资料
+            </button>
+          </div>
+          <div className="micro-card hover-lift mt-6 max-w-xl p-4">
+            <p className="text-xs text-[var(--text-faint)]">最近状态</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              {latestDocument
+                ? `最近入库：${latestDocument.title}。${latestDocument.canAnswer ? `已生成 ${latestDocument.chunks.length} 个可问答片段。` : latestDocument.parseMessage}`
+                : "还没有上传资料。先导入一份项目文档，生成第一组知识节点。"}
+            </p>
+          </div>
+        </div>
+
+        <div className="lux-card hero-visual-card p-5">
+          <div className="ambient-sheen absolute inset-0" />
+          <div className="relative grid gap-4">
+            <div className="micro-card rounded-2xl p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-[var(--text-muted)]">星图预览</p>
+                  <p className="mt-1 text-2xl font-semibold text-[var(--text-primary)]">{counts.nodeCount} 节点 · {counts.edgeCount} 关系</p>
+                </div>
+                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--accent)] text-[var(--on-accent)]">
+                  <Network className="h-5 w-5" />
+                </span>
+              </div>
+              <div className="mt-5 grid gap-3">
+                {state.graph.nodes.length > 0 ? (
+                  state.graph.nodes.slice(0, 5).map((node, index) => (
+                    <button
+                      key={node.id}
+                      type="button"
+                      onClick={() => onNavigate("graph")}
+                      className="group micro-card hover-lift flex items-center gap-3 p-3 text-left"
+                    >
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--accent)] shadow-[0_0_18px_var(--glow-accent)]" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-[var(--text-primary)]">{node.label}</span>
+                        <span className="mt-1 block text-xs text-[var(--text-faint)]">{node.type} · {node.sourceDocumentIds?.[0] ?? "system"}</span>
+                      </span>
+                      <span className="text-xs text-[var(--text-faint)]">{index + 1}</span>
+                    </button>
+                  ))
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("upload")}
+                    className="empty-orbit rounded-2xl p-5 text-left text-sm leading-7 text-[var(--accent)]"
+                  >
+                    还没有上传资料。先导入一份项目文档，生成第一组知识节点。
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <PreviewCard icon={CheckCircle2} label="AI 分析过程" value={latestDocument ? parseStatusLabel(latestDocument.parseStatus) : "等待导入"} detail={`${chunkCount} 个来源片段`} />
+              <PreviewCard icon={FileText} label="最近上传文件" value={latestDocument?.title ?? "暂无资料"} detail={latestDocument?.parseMessage ?? "导入后自动检测正文质量"} />
+              <PreviewCard icon={Search} label="来源引用" value={`${answerableDocuments.length} 份可问答`} detail="本地片段和网页来源分开显示" />
+              <PreviewCard icon={Globe2} label="联网增强" value="见顶部状态" detail="配置搜索 API 后显示真实网页来源" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="py-12 md:py-16">
+        <div className="grid grid-flow-dense gap-4 md:grid-cols-12">
+          <div className="md:col-span-3">
+            <StatCard label="已导入资料" value={`${state.documents.length}`} detail="PDF、Word、笔记和项目资料" icon={FileText} />
+          </div>
+          <div className="md:col-span-3">
+            <StatCard label="知识节点" value={`${counts.nodeCount}`} detail="项目、文档、技术、问题与成果" icon={Boxes} />
+          </div>
+          <div className="md:col-span-3">
+            <StatCard label="关系连接" value={`${counts.edgeCount}`} detail="提及、依赖、解决、生成和引用" icon={Network} />
+          </div>
+          <div className="md:col-span-3">
+            <StatCard label="已保存成果" value={`${state.outputs.length}`} detail="总结、问题、成果节点回写星图" icon={BarChart3} />
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-flow-dense gap-5 pb-16 md:grid-cols-12 md:pb-20">
+        <div className="md:col-span-7">
+          <AIRecommendationCard
+            onOpenUpload={() => onNavigate("upload")}
+            onOpenGraph={() => onNavigate("graph")}
+            onOpenAssistant={() => onNavigate("assistant")}
+            onOpenOutputs={() => onNavigate("outputs")}
+            recommendations={state.recommendations}
+            latestDocument={latestDocument}
+          />
+        </div>
+        <div className="lux-card workbench-panel rounded-3xl p-6 md:col-span-5">
+          <div className="mb-5 flex items-center gap-3">
+            <Sparkles className="h-5 w-5 text-[var(--accent)]" />
+            <h2 className="text-xl font-semibold text-[var(--text-primary)]">最近上传</h2>
+          </div>
+          <div className="space-y-3">
+            {state.documents.length > 0 ? (
+              state.documents.slice(0, 5).map((document) => (
+                <button
+                  key={document.id}
+                  type="button"
+                  onClick={() => onNavigate("graph")}
+                  className="group micro-card hover-lift w-full p-4 text-left"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="truncate text-sm font-medium text-[var(--text-primary)]">{document.title}</span>
+                    <span className="shrink-0 text-xs text-[var(--text-faint)]">{document.uploadedAt}</span>
+                  </div>
+                  <p className="mt-2 line-clamp-2 text-xs leading-6 text-[var(--text-faint)]">{document.canAnswer ? document.summary : document.parseMessage}</p>
+                </button>
+              ))
+            ) : (
+              <div className="empty-orbit rounded-2xl p-5 text-sm leading-7 text-[var(--text-faint)]">
+                还没有上传资料。先导入一份项目文档，生成第一组知识节点。
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function parseStatusLabel(status?: string) {
+  if (status === "parsed") return "正文可用";
+  if (status === "short_text") return "正文较短";
+  if (status === "needs_ocr") return "需要 OCR";
+  if (status === "garbled") return "文字异常";
+  if (status === "failed") return "解析失败";
+  return "仅元数据";
+}
+
+function PreviewCard({ icon: Icon, label, value, detail }: { icon: LucideIcon; label: string; value: string; detail: string }) {
+  return (
+    <div className="micro-card hover-lift p-4">
+      <div className="flex items-center gap-2 text-xs text-[var(--text-faint)]">
+        <Icon className="h-4 w-4 text-[var(--accent)]" />
+        {label}
+      </div>
+      <p className="mt-3 truncate text-sm font-semibold text-[var(--text-primary)]">{value}</p>
+      <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-faint)]">{detail}</p>
+    </div>
+  );
+}
