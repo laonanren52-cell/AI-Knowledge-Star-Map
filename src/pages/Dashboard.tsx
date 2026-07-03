@@ -2,6 +2,9 @@ import { BarChart3, Boxes, CheckCircle2, FileText, Globe2, Network, Search, Spar
 import { useEffect, useState } from "react";
 import AIRecommendationCard from "../components/dashboard/AIRecommendationCard";
 import StatCard from "../components/dashboard/StatCard";
+import WorkspaceBadge from "../components/common/WorkspaceBadge";
+import AiModeBadge from "../components/common/AiModeBadge";
+import { useAiStatus } from "../store/aiStatusStore";
 import { useKnowledgeStore } from "../store/knowledgeStore";
 import { getGraphCounts } from "../utils/graphUtils";
 
@@ -14,7 +17,8 @@ interface DashboardProps {
 const dynamicWords = ["资料", "项目", "技术", "问题", "成果"];
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
-  const { state } = useKnowledgeStore();
+  const { state, canEditCurrentWorkspace } = useKnowledgeStore();
+  const { status: aiStatus } = useAiStatus();
   const [wordIndex, setWordIndex] = useState(0);
   const counts = getGraphCounts(state.graph);
   const latestDocument = state.documents[0] ?? null;
@@ -40,6 +44,12 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           <p className="page-subtitle">
             上传文档、项目和笔记后，系统会抽取节点、关系和来源，让问答、总结和成果生成都有依据。
           </p>
+          <div className="mt-5">
+            <WorkspaceBadge />
+          </div>
+          <div className="mt-3">
+            <AiModeBadge compact />
+          </div>
           <p className="liquid-action mt-5 inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-secondary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
             把你的
             <span className="inline-flex min-w-[4.2em] justify-center rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-3 py-1 font-semibold text-[var(--accent)]">
@@ -52,7 +62,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               <Network className="h-4 w-4" />
               进入知识星图
             </button>
-            <button type="button" onClick={() => onNavigate("upload")} className="btn-secondary">
+            <button type="button" onClick={() => onNavigate(canEditCurrentWorkspace ? "upload" : "assistant")} className="btn-secondary">
               <FileText className="h-4 w-4" />
               导入资料
             </button>
@@ -110,10 +120,10 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <PreviewCard icon={CheckCircle2} label="AI 分析过程" value={latestDocument ? parseStatusLabel(latestDocument.parseStatus) : "等待导入"} detail={`${chunkCount} 个来源片段`} />
+              <PreviewCard icon={CheckCircle2} label="AI 分析状态" value={aiStatus.summary} detail={`${chunkCount} 个来源片段，${answerableDocuments.length} 份资料可问答`} />
               <PreviewCard icon={FileText} label="最近上传文件" value={latestDocument?.title ?? "暂无资料"} detail={latestDocument?.parseMessage ?? "导入后自动检测正文质量"} />
               <PreviewCard icon={Search} label="来源引用" value={`${answerableDocuments.length} 份可问答`} detail="本地片段和网页来源分开显示" />
-              <PreviewCard icon={Globe2} label="联网增强" value="见顶部状态" detail="配置搜索 API 后显示真实网页来源" />
+              <PreviewCard icon={Globe2} label="联网 / OCR" value={aiStatus.searchEnabled ? `搜索 ${aiStatus.searchProvider}` : "搜索未配置"} detail={aiStatus.ocrEnabled ? "OCR 已开启" : "OCR 未配置，仅影响扫描件识别"} />
             </div>
           </div>
         </div>
@@ -178,15 +188,6 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       </section>
     </div>
   );
-}
-
-function parseStatusLabel(status?: string) {
-  if (status === "parsed") return "正文可用";
-  if (status === "short_text") return "正文较短";
-  if (status === "needs_ocr") return "需要 OCR";
-  if (status === "garbled") return "文字异常";
-  if (status === "failed") return "解析失败";
-  return "仅元数据";
 }
 
 function PreviewCard({ icon: Icon, label, value, detail }: { icon: LucideIcon; label: string; value: string; detail: string }) {

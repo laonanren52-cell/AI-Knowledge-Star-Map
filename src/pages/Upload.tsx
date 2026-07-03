@@ -2,8 +2,11 @@ import { useRef, useState } from "react";
 import AnalysisProgress from "../components/upload/AnalysisProgress";
 import AnalysisResultCard from "../components/upload/AnalysisResultCard";
 import UploadDropzone from "../components/upload/UploadDropzone";
-import { analyzeDocument, analyzeDocumentMock, buildUnavailableAnalysis, getClientAiConfig } from "../services/aiService";
+import AiModeBadge from "../components/common/AiModeBadge";
+import WorkspaceBadge from "../components/common/WorkspaceBadge";
+import { analyzeDocument, analyzeDocumentMock, buildUnavailableAnalysis } from "../services/aiService";
 import { parseUploadedFile, validateUpload } from "../services/documentService";
+import { useAiStatus } from "../store/aiStatusStore";
 import { useKnowledgeStore } from "../store/knowledgeStore";
 import type { ParsedDocument } from "../types/document";
 import type { AnalysisResult } from "../types/graph";
@@ -23,7 +26,8 @@ interface BatchState {
 }
 
 export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
-  const { ingestAnalysis } = useKnowledgeStore();
+  const { ingestAnalysis, canEditCurrentWorkspace, currentWorkspace } = useKnowledgeStore();
+  const { status: aiStatus, markAiSuccess, markAiFailure } = useAiStatus();
   const [error, setError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<number | null>(null);
   const [result, setResult] = useState<{ analysis: AnalysisResult; file: File; parsed: ParsedDocument } | null>(null);
@@ -39,6 +43,10 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
   }
 
   async function handleFiles(files: File[]) {
+    if (!canEditCurrentWorkspace) {
+      setError("你当前只有查看权限，不能上传资料到管理员共享星图。");
+      return;
+    }
     const uniqueFiles = files.filter(Boolean);
     if (uniqueFiles.length === 0) {
       setError("没有检测到可导入的文件。");
@@ -118,9 +126,11 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
       }
 
       const analysis = await analyzeDocument(parsed.text, file.name, parsed);
+      markAiSuccess("analyze");
       ingestAndShowResult(file, parsed, { ...analysis, parsing: parsed.diagnostics });
       return { ok: true, message: "导入成功。" };
     } catch (err) {
+      markAiFailure("analyze", err);
       setCurrentStep(null);
       try {
         const parsed = await parseUploadedFile(file);
@@ -146,9 +156,11 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
         await new Promise((resolve) => window.setTimeout(resolve, 160));
       }
       const analysis = await analyzeDocumentMock(fallbackRequest.parsed.text, fallbackRequest.file.name, fallbackRequest.parsed);
+      markAiSuccess("mock-analyze");
       ingestAndShowResult(fallbackRequest.file, fallbackRequest.parsed, { ...analysis, parsing: fallbackRequest.parsed.diagnostics });
       setFallbackRequest(null);
     } catch (err) {
+      markAiFailure("mock-analyze", err);
       setError(err instanceof Error ? err.message : "mock 演示分析失败。");
     } finally {
       setCurrentStep(null);
@@ -168,8 +180,10 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
         await new Promise((resolve) => window.setTimeout(resolve, 220));
       }
       const analysis = await analyzeDocument(parsed.text, file.name, parsed);
+      markAiSuccess("continue-analyze");
       ingestAndShowResult(file, parsed, { ...analysis, parsing: parsed.diagnostics });
     } catch (err) {
+      markAiFailure("continue-analyze", err);
       setCurrentStep(null);
       try {
         const parsed = await parseUploadedFile(file, { forceAnalyze: true });
@@ -221,15 +235,38 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
           <p className="page-subtitle">
             上传资料后，系统会解析正文、检测质量、切片保存来源，再抽取节点和关系写入知识星图。
           </p>
-          <p className="mt-3 text-xs text-[var(--text-faint)]">
-            当前 AI 模式：{getClientAiConfig().provider === "mock" ? "Mock 演示模式" : "API 代理"}。真实接口失败时不会自动伪装成 mock。
-          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--text-faint)]">
+            <AiModeBadge compact />
+            <span>文件解析、结构化分析和星图写入分段展示；局部失败不会被误报为整站不可用。</span>
+          </div>
         </div>
         <button type="button" onClick={onOpenGraph} className="btn-secondary">
           查看知识星图
         </button>
       </div>
 
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <WorkspaceBadge />
+        {!canEditCurrentWorkspace && (
+          <span className="rounded-full border border-[var(--warning-border)] bg-[var(--warning-bg)] px-4 py-2 text-sm text-[var(--warning)]">
+            只读共享星图不能上传资料。请切换到个人星图或管理员管理台。
+          </span>
+        )}
+      </div>
+
+      {!canEditCurrentWorkspace ? (
+        <div className="lux-card rounded-3xl p-8">
+          <p className="text-sm text-[var(--warning)]">当前空间：{currentWorkspace?.name}</p>
+          <h2 className="mt-3 text-3xl font-semibold text-[var(--text-primary)]">你当前只有查看权限</h2>
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-[var(--text-muted)]">
+            普通用户可以查看管理员共享星图、搜索节点和向 Copilot 提问，但不能上传资料、删除节点或清空管理员内容。
+          </p>
+          <button type="button" onClick={onOpenGraph} className="btn-primary mt-6">
+            返回知识星图
+          </button>
+        </div>
+      ) : (
+        <>
       <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
         <UploadDropzone onFilesSelected={(files) => void handleFiles(files)} error={error} disabled={currentStep !== null} />
         {currentStep !== null ? (
@@ -249,11 +286,18 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
           <AnalysisResultCard result={result.analysis} file={result.file} parsed={result.parsed} onOpenGraph={onOpenGraph} onOpenAssistant={onOpenAssistant} />
         ) : fallbackRequest ? (
           <div className="lux-card flex min-h-[420px] flex-col justify-center rounded-3xl p-8">
-            <p className="text-sm text-[var(--warning)]">AI 接口未完成</p>
-            <h2 className="mt-3 text-3xl font-semibold text-[var(--text-primary)]">真实 AI 调用失败，尚未回退 mock</h2>
+            <p className="text-sm text-[var(--warning)]">本次结构化分析未完成</p>
+            <h2 className="mt-3 text-3xl font-semibold text-[var(--text-primary)]">文件正文已解析，但 AI 分析请求失败</h2>
             <p className="mt-4 max-w-xl text-sm leading-7 text-[var(--text-muted)]">
-              文件正文已经解析成功，但 API 代理没有返回可用分析结果。你可以检查后端模型配置，或手动启用 mock 演示继续验证星图链路。
+              {aiStatus.connection === "connected"
+                ? "AI 代理处于可连接状态，但本次分析请求没有返回可用的结构化结果。可以稍后重试，或使用 Mock 分析继续演示星图链路。"
+                : "文件正文已经解析成功，但当前 AI 代理不可用或部分能力未配置。可以检查后端环境变量，或使用 Mock 分析继续演示星图链路。"}
             </p>
+            {aiStatus.lastError && (
+              <p className="mt-4 rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-bg)] px-4 py-3 text-sm text-[var(--warning)]">
+                最近一次错误：{aiStatus.lastError}
+              </p>
+            )}
             <button type="button" onClick={() => void runMockFallback()} className="mt-7 btn-secondary w-fit border-[var(--warning-border)] text-[var(--warning)]">
               使用 mock 演示继续
             </button>
@@ -319,6 +363,8 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
           </div>
         </div>
       </section>
+        </>
+      )}
     </div>
   );
 }

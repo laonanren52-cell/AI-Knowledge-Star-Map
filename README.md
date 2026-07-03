@@ -1,1 +1,126 @@
-# zhimai
+# 知脉 AI
+
+知脉 AI 是一个个人知识图谱与智能信息库工作台。用户上传 PDF、Word、笔记和项目资料后，系统会解析正文、检测质量、切片保存来源、抽取节点与关系，并写入 Obsidian 风格知识星图。Copilot 可基于星图节点、文件正文片段和来源引用进行问答、总结和成果生成。
+
+## 核心能力
+
+- 多用户登录与知识空间：管理员共享星图、个人私有星图、只读/可编辑权限。
+- 知识导入：支持批量上传，解析正文，展示解析质量、可用片段、AI 分析和图谱写入状态。
+- 知识星图：基于 `vis-network` 的 Obsidian Global Graph 风格星图，支持拖动、筛选、搜索、节点详情和侧栏独立滚动。
+- 知源 Copilot：支持仅资料库、联网增强、混合验证三种问答模式，回答带本地资料来源和网页来源。
+- 成果工坊：基于资料片段生成总结、答辩稿、PPT 大纲、面试问答等成果，并可保存回星图。
+- AI 状态统一：顶部、首页、导入页、Copilot 和成果页共享同一个 AI 运行状态源，避免旧失败状态误报。
+
+## 技术栈
+
+- 前端：React 18、Vite、TypeScript、Tailwind CSS、Framer Motion、lucide-react
+- 图谱：vis-network、vis-data
+- 后端：Node.js 原生 HTTP 服务
+- 存储：当前 Demo 使用浏览器 `localStorage` 和后端内存/文件式轻量数据，后续可替换为数据库
+
+## 本地运行
+
+```bash
+npm install
+npm run dev
+```
+
+另开一个终端启动后端 AI 代理：
+
+```bash
+npm run dev:api
+```
+
+默认前端地址：
+
+```text
+http://localhost:5173
+```
+
+默认后端地址：
+
+```text
+http://localhost:3001
+```
+
+## Demo 登录
+
+- 管理员：`admin`，密码输入任意非空内容
+- 普通用户：`user`，密码输入任意非空内容
+
+管理员可维护共享星图；普通用户可查看管理员共享星图，也可进入个人星图上传和管理自己的资料。
+
+## 环境变量
+
+前端 `.env` 示例：
+
+```env
+VITE_AI_PROVIDER=api
+VITE_API_BASE_URL=http://localhost:3001
+```
+
+后端 `.env` 示例：
+
+```env
+DEEPSEEK_API_KEY=your_deepseek_key
+OPENAI_API_KEY=your_openai_key
+AI_PROVIDER=deepseek
+AI_MODEL=deepseek-chat
+WEB_SEARCH_ENABLED=false
+TAVILY_API_KEY=
+OCR_PROVIDER=
+OCR_API_KEY=
+```
+
+如果没有配置真实模型 Key，系统会降级为 Mock 演示模式，不会让页面崩溃。联网搜索未配置时会明确提示“联网搜索暂未配置”，不会伪造网页来源。
+
+## 构建
+
+```bash
+npm run build
+```
+
+构建产物位于：
+
+```text
+dist/
+```
+
+## EdgeOne / 静态部署配置
+
+当前仓库根目录已经包含 `package.json` 和 `package-lock.json`，部署平台应使用仓库根目录作为构建根目录。
+
+- Root Directory：`./`
+- Install Command：`npm ci`
+- Build Command：`npm run build`
+- Output Directory：`dist`
+
+如果前端和后端分开部署，生产环境推荐使用 `/api` 反向代理到后端，避免浏览器跨域和 `localhost` 请求问题。
+
+## 生产部署注意事项
+
+1. 前端生产环境不要使用 `localhost` 作为 API 地址。
+2. 如果使用 Nginx，前端静态资源指向 `dist`，`/api` 代理到 Node 后端。
+3. React/Vite 单页应用需要配置 fallback 到 `index.html`，否则刷新 `/graph`、`/upload`、`/copilot` 会 404。
+4. 腾讯云安全组至少放行 80/443；后端端口建议只由 Nginx 内部代理，不直接暴露。
+5. 上传功能需要确认后端上传目录存在且有写入权限，并配置 Nginx 上传大小限制。
+
+## 最近更新
+
+2026-07-03：
+
+- 新增多用户登录、知识空间和权限控制。
+- 新增统一 AI 状态管理，修复真实 AI 已接入但页面误报失败或 Mock 的问题。
+- 重构顶部导航为三段式信息架构。
+- 修复星图页左右侧栏内容显示不完整、侧栏内部滚动和横向溢出问题。
+- 优化 Copilot 三栏工作台滚动边界。
+- 保留深色知识宇宙与液态玻璃视觉体系，并增加页面切换动效。
+
+## 验证命令
+
+```bash
+npx tsc -b
+npm run build
+```
+
+当前已验证通过；Vite 仍会提示部分 chunk 超过 500 kB，这是体积优化提示，不影响运行。后续可通过动态 import 拆分页面模块。

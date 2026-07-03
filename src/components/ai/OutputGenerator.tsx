@@ -1,8 +1,10 @@
 import { Copy, Loader2, RefreshCw, Save, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { generateOutput } from "../../services/aiService";
+import { useAiStatus } from "../../store/aiStatusStore";
 import { useKnowledgeStore } from "../../store/knowledgeStore";
 import type { GeneratedOutput, GeneratedOutputType } from "../../types/ai";
+import WorkspaceBadge from "../common/WorkspaceBadge";
 import SourceCard from "./SourceCard";
 
 const outputTypes: Array<{ key: GeneratedOutputType; label: string; hint: string }> = [
@@ -15,7 +17,8 @@ const outputTypes: Array<{ key: GeneratedOutputType; label: string; hint: string
 ];
 
 export default function OutputGenerator() {
-  const { state, addOutput } = useKnowledgeStore();
+  const { state, addOutput, canEditCurrentWorkspace } = useKnowledgeStore();
+  const { markAiSuccess, markAiFailure } = useAiStatus();
   const [selectedType, setSelectedType] = useState<GeneratedOutputType>("resume");
   const [output, setOutput] = useState<GeneratedOutput | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,9 +44,11 @@ export default function OutputGenerator() {
         edgeCount: state.graph.edges.length,
         copilotContext: state.copilotContext,
       });
+      markAiSuccess("generate-output");
       setOutput(next);
       if (!next.body?.trim()) setError("AI 已返回结果，但正文为空，请重新生成。");
     } catch (err) {
+      markAiFailure("generate-output", err);
       setError(err instanceof Error ? err.message : "成果生成失败，请稍后重试。");
     } finally {
       setLoading(false);
@@ -92,6 +97,7 @@ export default function OutputGenerator() {
             <p className="mt-2 text-xs text-[var(--text-faint)]">来源状态：{output ? sourceStatusLabel(output.sourceStatus) : "等待生成"}</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <WorkspaceBadge compact />
             <button
               type="button"
               onClick={async () => {
@@ -104,18 +110,24 @@ export default function OutputGenerator() {
               <Copy className="h-4 w-4" />
               {copied ? "已复制" : "复制"}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!output) return;
-                addOutput(output, state.copilotContext?.nodeId);
-                setSaved(true);
-              }}
-              className="btn-secondary"
-            >
-              <Save className="h-4 w-4" />
-              {saved ? "已保存" : "保存到星图"}
-            </button>
+            {canEditCurrentWorkspace ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!output) return;
+                  addOutput(output, state.copilotContext?.nodeId);
+                  setSaved(true);
+                }}
+                className="btn-secondary"
+              >
+                <Save className="h-4 w-4" />
+                {saved ? "已保存" : "保存到星图"}
+              </button>
+            ) : (
+              <span className="rounded-full border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning)]">
+                只读空间不可保存
+              </span>
+            )}
             <button type="button" onClick={() => void run()} className="btn-primary">
               <RefreshCw className="h-4 w-4" />
               重新生成

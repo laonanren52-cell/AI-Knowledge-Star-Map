@@ -32,6 +32,7 @@ export interface TextChunk {
   end: number;
   nodeId?: string;
   nodeLabel?: string;
+  workspaceId?: string;
 }
 
 export interface ParseDiagnostics {
@@ -65,6 +66,7 @@ export interface ParsedDocument {
 
 export interface KnowledgeDocument {
   id: string;
+  workspaceId?: string;
   title: string;
   kind: DocumentKind;
   sizeLabel: string;

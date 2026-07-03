@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import GraphSidebar from "../components/graph/GraphSidebar";
 import KnowledgeGraph from "../components/graph/KnowledgeGraph";
 import NodeDetailPanel from "../components/graph/NodeDetailPanel";
+import WorkspaceBadge from "../components/common/WorkspaceBadge";
 import { getVisibleGraph, type GraphMode } from "../services/graphService";
+import { useAuthStore } from "../store/authStore";
 import { useKnowledgeStore } from "../store/knowledgeStore";
 import type { GraphNode, GraphNodeType, SourceReference } from "../types/graph";
 import { getConnectedEdges, getNeighborIds, getNodeById, searchGraphNodes } from "../utils/graphUtils";
@@ -14,7 +16,8 @@ interface GraphProps {
 }
 
 export default function Graph({ onOpenAssistant }: GraphProps) {
-  const { state, deleteNode, deleteDocument, clearGraph, setCopilotContext } = useKnowledgeStore();
+  const { state, deleteNode, deleteDocument, clearGraph, setCopilotContext, canEditCurrentWorkspace, currentWorkspace } = useKnowledgeStore();
+  const { publishWorkspace } = useAuthStore();
   const [activeTypes, setActiveTypes] = useState<GraphNodeType[]>(allTypes);
   const [mode, setMode] = useState<GraphMode>("global");
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -109,6 +112,10 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
   }
 
   function handleClearGraph() {
+    if (!canEditCurrentWorkspace) {
+      window.alert("你当前只有查看权限，不能修改管理员共享星图。");
+      return;
+    }
     if (!window.confirm("确认清空当前知识星图、资料记录和成果节点吗？此操作不可撤销。")) return;
     clearGraph();
     setMode("global");
@@ -121,6 +128,10 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
   }
 
   function handleDeleteDocument(documentId: string) {
+    if (!canEditCurrentWorkspace) {
+      window.alert("你当前只有查看权限，不能修改管理员共享星图。");
+      return;
+    }
     const document = state.documents.find((item) => item.id === documentId);
     if (!document) return;
     if (!window.confirm(`确认删除资料「${document.title}」及其专属节点关系吗？`)) return;
@@ -131,6 +142,10 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
   }
 
   function handleDeleteNode() {
+    if (!canEditCurrentWorkspace) {
+      window.alert("你当前只有查看权限，不能修改管理员共享星图。");
+      return;
+    }
     if (!selectedNode) return;
     if (!window.confirm(`确认删除节点「${selectedNode.label}」及相关关系边吗？`)) return;
     deleteNode(selectedNode.id);
@@ -170,8 +185,29 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
         </div>
       </div>
 
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <WorkspaceBadge />
+        <div className="flex flex-wrap items-center gap-2">
+          {currentWorkspace?.type === "admin_public" && (
+            <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-4 py-2 text-xs text-[var(--text-muted)]">
+              v{currentWorkspace.version} · 最近发布 {currentWorkspace.lastPublishedAt?.slice(0, 10) ?? "未发布"} · {currentWorkspace.updateSummary ?? "暂无更新说明"}
+            </span>
+          )}
+          {canEditCurrentWorkspace && currentWorkspace?.type === "admin_public" ? (
+            <button type="button" onClick={() => publishWorkspace("管理员发布了新的共享星图更新。")} className="btn-secondary">
+              发布更新
+            </button>
+          ) : (
+            <button type="button" onClick={() => window.location.reload()} className="btn-secondary">
+              刷新共享星图
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="graph-workspace-grid grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_300px] 2xl:grid-cols-[320px_minmax(680px,1fr)_360px]">
         <GraphSidebar
+          canEdit={canEditCurrentWorkspace}
           activeTypes={activeTypes}
           mode={mode}
           search={search}
@@ -221,6 +257,7 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
           }}
         />
         <NodeDetailPanel
+          canEdit={canEditCurrentWorkspace}
           node={selectedNode}
           neighbors={neighbors}
           edges={connectedEdges}

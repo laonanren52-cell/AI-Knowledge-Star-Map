@@ -10,6 +10,7 @@ import type { AIRecommendation } from "../../store/knowledgeStore";
 type NodeIntent = "ask" | "summary" | "generate" | "analyze" | "web";
 
 interface NodeDetailPanelProps {
+  canEdit: boolean;
   node: GraphNode | null;
   neighbors: GraphNode[];
   edges: GraphEdge[];
@@ -24,6 +25,7 @@ interface NodeDetailPanelProps {
 const outputActions = ["简历项目经历", "项目答辩稿", "PPT 大纲", "面试问答"];
 
 export default function NodeDetailPanel({
+  canEdit,
   node,
   neighbors,
   edges,
@@ -230,10 +232,16 @@ export default function NodeDetailPanel({
               ))}
             </div>
           </details>
-          <button type="button" onClick={onDeleteNode} className="flex items-center gap-2 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2.5 text-left text-sm font-semibold text-[var(--danger)] transition hover:border-[var(--danger-border)]">
-            <Trash2 className="h-4 w-4" />
-            删除该节点
-          </button>
+          {canEdit ? (
+            <button type="button" onClick={onDeleteNode} className="flex items-center gap-2 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2.5 text-left text-sm font-semibold text-[var(--danger)] transition hover:border-[var(--danger-border)]">
+              <Trash2 className="h-4 w-4" />
+              删除该节点
+            </button>
+          ) : (
+            <p className="rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2.5 text-xs leading-5 text-[var(--warning)]">
+              你当前只有查看权限，不能修改管理员共享星图。
+            </p>
+          )}
         </div>
       </div>
     </motion.aside>

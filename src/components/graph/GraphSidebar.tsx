@@ -16,6 +16,7 @@ const modes: Array<{ key: GraphMode; label: string; detail: string }> = [
 ];
 
 interface GraphSidebarProps {
+  canEdit: boolean;
   activeTypes: GraphNodeType[];
   mode: GraphMode;
   search: string;
@@ -42,6 +43,7 @@ interface GraphSidebarProps {
 }
 
 export default function GraphSidebar({
+  canEdit,
   activeTypes,
   mode,
   search,
@@ -74,6 +76,12 @@ export default function GraphSidebar({
             <p className="text-xs text-[var(--text-faint)]">搜索、筛选、模式切换</p>
           </div>
         </div>
+
+        {!canEdit && (
+          <p className="mt-3 rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs leading-5 text-[var(--warning)]">
+            只读共享星图：可搜索、查看和提问，不能上传、删除或清空管理员内容。
+          </p>
+        )}
 
         <label className="mt-4 block">
           <span className="mb-2 flex items-center gap-2 text-sm text-[var(--text-secondary)]">
@@ -201,14 +209,16 @@ export default function GraphSidebar({
                       <p className="mt-1 text-xs text-[var(--text-faint)]">{document.uploadedAt} · {document.sizeLabel}</p>
                       <p className="mt-1 text-xs text-[var(--text-faint)]">{document.canAnswer ? `${document.chunks.length} 个片段` : document.parseStatus}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteDocument(document.id)}
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger)] opacity-75 transition hover:opacity-100"
-                      title="删除该资料及关联节点"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteDocument(document.id)}
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger)] opacity-75 transition hover:opacity-100"
+                        title="删除该资料及关联节点"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -218,7 +228,7 @@ export default function GraphSidebar({
       </div>
 
       <div className="graph-panel-footer">
-        <details className="graph-section" open>
+        <details className="graph-section">
           <summary>
             <span className="text-sm text-[var(--text-muted)]">星图统计</span>
             <ChevronDown className="graph-section-chevron h-4 w-4" />
@@ -244,10 +254,12 @@ export default function GraphSidebar({
           <RotateCcw className="h-4 w-4" />
           重置视图
         </button>
-        <button type="button" onClick={onClearGraph} className="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-[var(--danger-border)] bg-[var(--danger-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--danger)] transition hover:-translate-y-0.5 hover:border-[var(--danger-border)]">
-          <Trash2 className="h-4 w-4" />
-          清空知识星图
-        </button>
+        {canEdit && (
+          <button type="button" onClick={onClearGraph} className="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-[var(--danger-border)] bg-[var(--danger-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--danger)] transition hover:-translate-y-0.5 hover:border-[var(--danger-border)]">
+            <Trash2 className="h-4 w-4" />
+            清空知识星图
+          </button>
+        )}
       </div>
     </aside>
   );

@@ -1,4 +1,5 @@
 import { mockDocuments } from "../data/mockDocuments";
+import { getAuthHeaders } from "./authService";
 import type { AnswerMode, GeneratedOutput, GeneratedOutputType, QAResult, WebSourceReference } from "../types/ai";
 import type { KnowledgeDocument, ParsedDocument } from "../types/document";
 import type { AnalysisResult, GraphData, GraphEdge, GraphNode, GraphNodeType, SourceReference } from "../types/graph";
@@ -223,7 +224,7 @@ export function buildUnavailableAnalysis(fileName: string, parsed: ParsedDocumen
 async function postApi<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(body),
   });
   const text = await response.text();
@@ -247,7 +248,7 @@ async function callApiStrict<T>(operation: string, request: () => Promise<T>): P
     return await request();
   } catch (error) {
     const reason = error instanceof Error ? error.message : "未知错误";
-    throw new Error(`${operation} 调用真实 AI 接口失败：${reason}。当前未自动回退 mock。`);
+    throw new Error(`${operation} 请求失败：${reason}`);
   }
 }
 

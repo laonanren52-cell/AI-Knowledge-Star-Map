@@ -228,6 +228,59 @@ header {
   mask-composite: exclude;
 }
 
+.app-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(220px, 0.72fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 4rem;
+}
+
+.topbar-left,
+.topbar-center,
+.topbar-right {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.topbar-left {
+  justify-content: flex-start;
+}
+
+.topbar-center {
+  display: flex;
+  justify-content: center;
+}
+
+.topbar-right {
+  justify-content: flex-end;
+}
+
+.topbar-center .micro-card {
+  max-width: 100%;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.topbar-center .micro-card > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-mode-glass {
+  max-width: min(34vw, 26rem);
+}
+
 .brand-pill,
 .nav-tab,
 .ai-mode-glass,
@@ -270,6 +323,10 @@ header {
   white-space: nowrap;
 }
 
+.nav-label {
+  display: inline;
+}
+
 .nav-tab.is-active {
   box-shadow: 0 0 26px rgba(121, 231, 242, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
@@ -282,6 +339,10 @@ header {
   width: min(1500px, calc(100vw - 2rem));
   margin: 0 auto;
   padding: 2rem 0 4.5rem;
+}
+
+.page-transition {
+  animation: pageEnter 460ms var(--ease-liquid) both;
 }
 
 @media (min-width: 768px) {
@@ -620,6 +681,25 @@ header {
 
 .workbench-panel {
   border-radius: var(--radius-panel);
+  min-height: 0;
+}
+
+.copilot-workbench-grid {
+  height: clamp(640px, calc(100vh - 210px), 820px);
+  min-height: 0;
+}
+
+.copilot-workbench-grid > .workbench-panel {
+  height: 100%;
+}
+
+.copilot-workbench-grid > .workbench-panel::after {
+  inset: 0;
+}
+
+.copilot-workbench-grid > aside.workbench-panel {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .answer-card,
@@ -666,7 +746,7 @@ header {
 }
 
 .graph-workspace-grid {
-  height: clamp(620px, calc(100vh - 220px), 790px);
+  height: clamp(560px, calc(100vh - 235px), 790px);
   min-height: 0;
   align-items: stretch;
 }
@@ -679,7 +759,17 @@ header {
 .graph-side-panel {
   display: flex;
   min-height: 0;
+  max-width: 100%;
   overflow: hidden;
+}
+
+.graph-side-panel::after {
+  inset: 0;
+}
+
+.graph-side-panel *,
+.graph-side-panel button {
+  min-width: 0;
 }
 
 .graph-panel-header {
@@ -705,6 +795,7 @@ header {
 }
 
 .graph-section {
+  max-width: 100%;
   border: 1px solid var(--border-subtle);
   border-radius: 1.15rem;
   background:
@@ -735,6 +826,7 @@ header {
 }
 
 .graph-section-body {
+  min-width: 0;
   padding: 0 0.85rem 0.9rem;
 }
 
@@ -781,7 +873,38 @@ header {
   background: transparent;
 }
 
+@media (max-width: 1439px) {
+  .app-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .topbar-center {
+    display: none;
+  }
+
+  .nav-label {
+    display: none;
+  }
+
+  .ai-mode-glass {
+    max-width: 18rem;
+  }
+}
+
 @media (max-width: 1279px) {
+  .app-topbar {
+    border-radius: 1.65rem;
+  }
+
+  .copilot-workbench-grid {
+    height: auto;
+  }
+
+  .copilot-workbench-grid > .workbench-panel {
+    height: auto;
+    max-height: min(720px, 76vh);
+  }
+
   .graph-workspace-grid {
     height: auto;
   }
@@ -795,6 +918,62 @@ header {
   }
 }
 
+@media (max-width: 767px) {
+  .app-topbar {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+    border-radius: 1.35rem;
+  }
+
+  .topbar-left {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .topbar-left .nav-glass {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .topbar-left .nav-glass::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar-right {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .topbar-right .ai-mode-glass {
+    max-width: min(58vw, 19rem);
+  }
+
+  .page-shell {
+    width: min(100vw - 1.25rem, 1500px);
+    padding-top: 1.25rem;
+  }
+}
+
+@media (max-height: 820px) and (min-width: 1024px) {
+  .page-shell {
+    padding-top: 1.5rem;
+  }
+
+  .page-title {
+    font-size: clamp(2rem, 3.5vw, 3.45rem);
+  }
+
+  .page-title-compact {
+    font-size: clamp(1.85rem, 2.8vw, 3rem);
+  }
+
+  .page-subtitle {
+    line-height: 1.65;
+  }
+}
+
 @keyframes fadeUp {
   from {
     opacity: 0;
@@ -803,6 +982,19 @@ header {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.995);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
   }
 }
 

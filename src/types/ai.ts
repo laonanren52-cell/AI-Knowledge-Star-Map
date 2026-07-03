@@ -32,6 +32,7 @@ export type GeneratedOutputType =
 
 export interface GeneratedOutput {
   id: string;
+  workspaceId?: string;
   type: GeneratedOutputType;
   title: string;
   content?: string;

@@ -1,9 +1,11 @@
 import { ArrowUp, BrainCircuit, CheckCircle2, Copy, Globe2, Library, Loader2, RefreshCw, Save, SearchCheck, Sparkles, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { askWithSources } from "../../services/aiService";
+import { useAiStatus } from "../../store/aiStatusStore";
 import { useKnowledgeStore } from "../../store/knowledgeStore";
 import type { AnswerMode, GeneratedOutput, QAResult } from "../../types/ai";
 import AiModeBadge from "../common/AiModeBadge";
+import WorkspaceBadge from "../common/WorkspaceBadge";
 import SourceCard from "./SourceCard";
 
 const answerModes: Array<{ key: AnswerMode; label: string; detail: string; icon: LucideIcon }> = [
@@ -35,7 +37,8 @@ function questionFromContext(context: ReturnType<typeof useKnowledgeStore>["stat
 }
 
 export default function AIChatPanel() {
-  const { state, recordAsk, addOutput } = useKnowledgeStore();
+  const { state, recordAsk, addOutput, canEditCurrentWorkspace } = useKnowledgeStore();
+  const { markAiSuccess, markAiFailure } = useAiStatus();
   const [answerMode, setAnswerMode] = useState<AnswerMode>(state.copilotContext?.answerMode ?? "hybrid");
   const [question, setQuestion] = useState(() => questionFromContext(state.copilotContext));
   const [result, setResult] = useState<QAResult | null>(null);
@@ -78,9 +81,11 @@ export default function AIChatPanel() {
       await new Promise((resolve) => window.setTimeout(resolve, 160));
       setStatus(mode === "library" ? "正在基于资料库生成回答" : "正在检查联网增强状态");
       const response = await askWithSources(nextQuestion, state.documents, { mode, context: state.copilotContext });
+      markAiSuccess("ask");
       setResult(response);
       recordAsk(nextQuestion);
     } catch (err) {
+      markAiFailure("ask", err);
       setError(err instanceof Error ? err.message : "AI 回答失败，请稍后重试。");
     } finally {
       setLoading(false);
@@ -122,8 +127,8 @@ export default function AIChatPanel() {
   }, [state.copilotContext?.nodeId, state.copilotContext?.intent]);
 
   return (
-    <div className="grid items-stretch gap-5 xl:grid-cols-[300px_minmax(0,1fr)_360px]">
-      <aside className="lux-card workbench-panel thin-scrollbar max-h-[760px] overflow-y-auto rounded-3xl p-5">
+    <div className="copilot-workbench-grid grid items-stretch gap-5 xl:grid-cols-[300px_minmax(0,1fr)_360px]">
+      <aside className="lux-card workbench-panel thin-scrollbar overflow-y-auto rounded-3xl p-5">
         <div className="mb-5 flex items-center gap-3">
           <span className="icon-tile">
             <Sparkles className="h-5 w-5" />
@@ -168,7 +173,7 @@ export default function AIChatPanel() {
         </div>
       </aside>
 
-      <section className="lux-card workbench-panel flex min-h-[680px] flex-col rounded-3xl p-5 md:p-7">
+      <section className="lux-card workbench-panel flex min-h-0 flex-col rounded-3xl p-5 md:p-7">
         <div className="border-b border-[var(--border-subtle)] pb-5">
           <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
             <div className="flex items-center gap-3">
@@ -183,7 +188,8 @@ export default function AIChatPanel() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <AiModeBadge />
+              <WorkspaceBadge compact />
+              <AiModeBadge compact />
               <span className="rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-3 py-2 text-xs text-[var(--accent)]">
                 {confidenceLabel}
               </span>
@@ -255,21 +261,29 @@ export default function AIChatPanel() {
                   <Copy className="h-4 w-4" />
                   {copied ? "已复制" : "复制回答"}
                 </button>
-                <button type="button" onClick={saveAnswerAsNode} className="btn-secondary border-[var(--accent-border)] text-[var(--accent)]">
-                  <Save className="h-4 w-4" />
-                  {saved ? "已保存到星图" : "保存到星图"}
-                </button>
-                <select
-                  value={saveAs}
-                  onChange={(event) => setSaveAs(event.target.value as "output" | "concept" | "problem" | "tag")}
-                  className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-deep)] px-3 py-2 text-sm text-[var(--text-secondary)] outline-none"
-                  title="保存节点类型"
-                >
-                  <option value="output">成果节点</option>
-                  <option value="concept">总结节点</option>
-                  <option value="problem">问题节点</option>
-                  <option value="tag">标签节点</option>
-                </select>
+                {canEditCurrentWorkspace ? (
+                  <>
+                    <button type="button" onClick={saveAnswerAsNode} className="btn-secondary border-[var(--accent-border)] text-[var(--accent)]">
+                      <Save className="h-4 w-4" />
+                      {saved ? "已保存到星图" : "保存到星图"}
+                    </button>
+                    <select
+                      value={saveAs}
+                      onChange={(event) => setSaveAs(event.target.value as "output" | "concept" | "problem" | "tag")}
+                      className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-deep)] px-3 py-2 text-sm text-[var(--text-secondary)] outline-none"
+                      title="保存节点类型"
+                    >
+                      <option value="output">成果节点</option>
+                      <option value="concept">总结节点</option>
+                      <option value="problem">问题节点</option>
+                      <option value="tag">标签节点</option>
+                    </select>
+                  </>
+                ) : (
+                  <span className="rounded-full border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning)]">
+                    只读共享星图不能保存到管理员空间
+                  </span>
+                )}
                 <button type="button" onClick={() => void submit()} className="btn-secondary">
                   <RefreshCw className="h-4 w-4" />
                   重新回答
@@ -318,7 +332,7 @@ export default function AIChatPanel() {
         </form>
       </section>
 
-      <aside className="lux-card workbench-panel thin-scrollbar max-h-[760px] overflow-y-auto rounded-3xl p-5">
+      <aside className="lux-card workbench-panel thin-scrollbar overflow-y-auto rounded-3xl p-5">
         <h2 className="text-lg font-semibold text-[var(--text-primary)]">来源引用</h2>
         <p className="mt-2 text-sm leading-6 text-[var(--text-faint)]">本地资料和网页来源分开显示。没有真实片段时不会伪造引用。</p>
 

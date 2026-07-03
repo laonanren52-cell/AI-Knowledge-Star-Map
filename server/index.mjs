@@ -7,6 +7,89 @@ const JSON_LIMIT_BYTES = 1024 * 1024 * 2;
 
 const relationTypes = new Set(["mentions", "belongs_to", "uses", "depends_on", "solves", "generates", "related_to"]);
 const nodeTypes = new Set(["project", "document", "tech", "problem", "output", "tag", "concept"]);
+const ADMIN_USER_ID = "admin_default";
+const ADMIN_PUBLIC_WORKSPACE_ID = "admin_public_default";
+
+const demoUsers = [
+  { id: ADMIN_USER_ID, username: "admin", email: "admin@zhimai.local", role: "admin", isDemo: true },
+  { id: "user_default", username: "user", email: "user@zhimai.local", role: "user", isDemo: true },
+];
+
+function privateWorkspaceId(userId) {
+  return `user_private_${userId}`;
+}
+
+function createWorkspace(user) {
+  const stamp = new Date().toISOString();
+  return {
+    id: privateWorkspaceId(user.id),
+    name: `${user.username} 的个人星图`,
+    type: "user_private",
+    ownerId: user.id,
+    visibility: "private",
+    createdAt: stamp,
+    updatedAt: stamp,
+    description: "用户个人知识空间。",
+    version: 1,
+  };
+}
+
+function listWorkspaces() {
+  const stamp = new Date().toISOString();
+  return [
+    {
+      id: ADMIN_PUBLIC_WORKSPACE_ID,
+      name: "管理员共享星图",
+      type: "admin_public",
+      ownerId: ADMIN_USER_ID,
+      visibility: "public",
+      createdAt: stamp,
+      updatedAt: stamp,
+      lastPublishedAt: stamp,
+      description: "管理员维护的共享知识空间。",
+      version: 1,
+      updateSummary: "初始化共享知识空间。",
+    },
+    ...demoUsers.map(createWorkspace),
+  ];
+}
+
+function userFromRequest(req) {
+  const id = String(req.headers["x-zhimai-user-id"] || "");
+  const role = String(req.headers["x-zhimai-user-role"] || "user");
+  const known = demoUsers.find((user) => user.id === id || user.username === id);
+  return known || { id: id || "anonymous", username: id || "anonymous", email: "", role: role === "admin" ? "admin" : "user" };
+}
+
+function workspaceFromRequest(req, payload = {}) {
+  const workspaceId = String(payload.workspaceId || req.headers["x-zhimai-workspace-id"] || ADMIN_PUBLIC_WORKSPACE_ID);
+  return listWorkspaces().find((workspace) => workspace.id === workspaceId) || null;
+}
+
+function canReadWorkspace(user, workspace) {
+  if (!user || !workspace) return false;
+  if (workspace.type === "admin_public" || workspace.type === "demo_public") return true;
+  return workspace.ownerId === user.id;
+}
+
+function canEditWorkspace(user, workspace) {
+  if (!user || !workspace) return false;
+  if (user.role === "admin" && workspace.type === "admin_public") return true;
+  return workspace.type === "user_private" && workspace.ownerId === user.id;
+}
+
+function enforceWorkspaceAccess(req, payload, mode) {
+  const user = userFromRequest(req);
+  const workspace = workspaceFromRequest(req, payload);
+  const allowed = mode === "write" ? canEditWorkspace(user, workspace) : canReadWorkspace(user, workspace);
+  if (!allowed) {
+    const reason = workspace?.type === "admin_public" ? "你当前只有查看权限，不能修改管理员共享星图。" : "你没有访问或编辑该知识空间的权限。";
+    const error = new Error(reason);
+    error.statusCode = mode === "write" ? 403 : 401;
+    throw error;
+  }
+  return { user, workspace };
+}
 
 function loadEnvFile(fileName) {
   const path = resolve(process.cwd(), fileName);
@@ -34,7 +117,7 @@ function jsonResponse(res, status, payload) {
     "Content-Length": Buffer.byteLength(body),
     "Access-Control-Allow-Origin": process.env.CORS_ORIGIN || "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Zhimai-User-Id,X-Zhimai-User-Role,X-Zhimai-Workspace-Id",
   });
   res.end(body);
 }
@@ -607,6 +690,17 @@ async function route(req, res) {
     });
     return;
   }
+  if (req.method === "GET" && req.url === "/api/auth/demo-users") {
+    jsonResponse(res, 200, { users: demoUsers.map(({ password, ...user }) => user) });
+    return;
+  }
+  if (req.method === "GET" && req.url === "/api/workspaces") {
+    const user = userFromRequest(req);
+    jsonResponse(res, 200, {
+      workspaces: listWorkspaces().filter((workspace) => canReadWorkspace(user, workspace)),
+    });
+    return;
+  }
   if (req.method !== "POST") {
     jsonResponse(res, 405, { error: "只支持 POST 请求。" });
     return;
@@ -614,19 +708,37 @@ async function route(req, res) {
 
   try {
     const payload = await readJson(req);
+    if (req.url === "/api/auth/login") {
+      const username = String(payload.username || "").trim().toLowerCase();
+      const password = String(payload.password || "");
+      const user = demoUsers.find((item) => item.username === username || item.email === username);
+      if (!user || !password.trim()) {
+        jsonResponse(res, 401, { error: "Demo 登录需要输入已存在账号和任意非空密码。" });
+        return;
+      }
+      jsonResponse(res, 200, {
+        user,
+        workspaces: listWorkspaces().filter((workspace) => canReadWorkspace(user, workspace)),
+      });
+      return;
+    }
     if (req.url === "/api/ai/analyze") {
+      enforceWorkspaceAccess(req, payload, "write");
       jsonResponse(res, 200, await analyze(payload));
       return;
     }
     if (req.url === "/api/ai/ask") {
+      enforceWorkspaceAccess(req, payload, "read");
       jsonResponse(res, 200, await ask(payload));
       return;
     }
     if (req.url === "/api/ai/generate-output") {
+      enforceWorkspaceAccess(req, payload, "write");
       jsonResponse(res, 200, await generateOutput(payload));
       return;
     }
     if (req.url === "/api/search") {
+      enforceWorkspaceAccess(req, payload, "read");
       const result = await searchWeb(payload);
       jsonResponse(res, result.warning ? 501 : 200, result);
       return;
@@ -634,7 +746,8 @@ async function route(req, res) {
     jsonResponse(res, 404, { error: "接口不存在。" });
   } catch (error) {
     console.error("[ai-proxy]", error);
-    jsonResponse(res, 400, { error: error instanceof Error ? error.message : "AI 代理服务处理失败。" });
+    const statusCode = Number.isFinite(error?.statusCode) ? error.statusCode : 400;
+    jsonResponse(res, statusCode, { error: error instanceof Error ? error.message : "AI 代理服务处理失败。" });
   }
 }
 

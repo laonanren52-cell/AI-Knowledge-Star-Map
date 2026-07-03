@@ -1,18 +1,22 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
 import { mockDocuments } from "../data/mockDocuments";
 import { mockGraphData } from "../data/mockGraphData";
+import { canEditWorkspace } from "../services/authService";
+import { useAuthStore } from "./authStore";
 import type { GeneratedOutput } from "../types/ai";
 import type { KnowledgeDocument, ParsedDocument, ParseDiagnostics, TextChunk } from "../types/document";
 import type { AnalysisResult, GraphData, GraphEdge, GraphNode, GraphNodeType, SourceReference } from "../types/graph";
+import { ADMIN_PUBLIC_WORKSPACE_ID, type Workspace, type WorkspaceAccess } from "../types/workspace";
 
-const STORAGE_KEY = "zhimai-ai-knowledge-store-v5";
-const LEGACY_STORAGE_KEYS = ["zhimai-ai-knowledge-store-v4", "zhimai-ai-knowledge-store-v3"];
+const STORAGE_KEY = "zhimai-ai-knowledge-store-v6";
+const LEGACY_STORAGE_KEYS = ["zhimai-ai-knowledge-store-v5", "zhimai-ai-knowledge-store-v4", "zhimai-ai-knowledge-store-v3"];
 
 export type ActivityType = "upload" | "ask" | "generate" | "delete" | "clear" | "reorganize";
 export type RecommendationAction = "upload" | "graph" | "assistant" | "outputs";
 
 export interface RecentActivity {
   id: string;
+  workspaceId?: string;
   type: ActivityType;
   title: string;
   detail: string;
@@ -30,6 +34,7 @@ export interface AIRecommendation {
 }
 
 export interface CopilotContext {
+  workspaceId?: string;
   nodeId?: string;
   nodeLabel?: string;
   nodeType?: GraphNodeType;
@@ -42,6 +47,9 @@ export interface CopilotContext {
 }
 
 export interface KnowledgeState {
+  workspaceId?: string;
+  workspace?: Workspace | null;
+  access?: WorkspaceAccess | null;
   documents: KnowledgeDocument[];
   graph: GraphData;
   outputs: GeneratedOutput[];
@@ -53,17 +61,20 @@ export interface KnowledgeState {
 }
 
 type KnowledgeAction =
-  | { type: "ingestAnalysis"; file: File; content: string; analysis: AnalysisResult; parsed?: ParsedDocument }
-  | { type: "deleteNode"; nodeId: string }
-  | { type: "deleteDocument"; documentId: string }
-  | { type: "clearGraph" }
+  | { type: "ingestAnalysis"; workspaceId: string; file: File; content: string; analysis: AnalysisResult; parsed?: ParsedDocument }
+  | { type: "deleteNode"; workspaceId: string; nodeId: string }
+  | { type: "deleteDocument"; workspaceId: string; documentId: string }
+  | { type: "clearGraph"; workspaceId: string }
   | { type: "resetDemo" }
-  | { type: "addOutput"; output: GeneratedOutput; relatedNodeId?: string | null; nodeType?: "output" | "problem" | "concept" | "tag" }
+  | { type: "addOutput"; workspaceId: string; output: GeneratedOutput; relatedNodeId?: string | null; nodeType?: "output" | "problem" | "concept" | "tag" }
   | { type: "setCopilotContext"; context: CopilotContext | null }
-  | { type: "recordAsk"; question: string };
+  | { type: "recordAsk"; workspaceId: string; question: string };
 
 interface KnowledgeContextValue {
   state: KnowledgeState;
+  currentWorkspace: Workspace | null;
+  currentAccess: WorkspaceAccess | null;
+  canEditCurrentWorkspace: boolean;
   ingestAnalysis: (file: File, content: string, analysis: AnalysisResult, parsed?: ParsedDocument) => void;
   deleteNode: (nodeId: string) => void;
   deleteDocument: (documentId: string) => void;
@@ -78,6 +89,49 @@ const KnowledgeContext = createContext<KnowledgeContextValue | null>(null);
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function workspaceIdOrDefault(workspaceId?: string | null) {
+  return workspaceId || ADMIN_PUBLIC_WORKSPACE_ID;
+}
+
+function documentWorkspaceId(document: Pick<KnowledgeDocument, "workspaceId">) {
+  return workspaceIdOrDefault(document.workspaceId);
+}
+
+function nodeWorkspaceId(node: Pick<GraphNode, "workspaceId">) {
+  return workspaceIdOrDefault(node.workspaceId);
+}
+
+function edgeWorkspaceId(edge: GraphEdge, nodesById?: Map<string, GraphNode>) {
+  if (edge.workspaceId) return edge.workspaceId;
+  const fromWorkspace = nodesById?.get(edge.from)?.workspaceId;
+  const toWorkspace = nodesById?.get(edge.to)?.workspaceId;
+  return workspaceIdOrDefault(fromWorkspace || toWorkspace);
+}
+
+function activityWorkspaceId(activity: Pick<RecentActivity, "workspaceId">) {
+  return workspaceIdOrDefault(activity.workspaceId);
+}
+
+function outputWorkspaceId(output: Pick<GeneratedOutput, "workspaceId">) {
+  return workspaceIdOrDefault(output.workspaceId);
+}
+
+function withDocumentWorkspace(document: KnowledgeDocument, workspaceId = ADMIN_PUBLIC_WORKSPACE_ID): KnowledgeDocument {
+  const nextWorkspaceId = workspaceIdOrDefault(document.workspaceId || workspaceId);
+  return {
+    ...document,
+    workspaceId: nextWorkspaceId,
+    chunks: (document.chunks ?? []).map((chunk) => ({ ...chunk, workspaceId: chunk.workspaceId ?? nextWorkspaceId })),
+  };
+}
+
+function withGraphWorkspace(graph: GraphData, workspaceId = ADMIN_PUBLIC_WORKSPACE_ID): GraphData {
+  return {
+    nodes: graph.nodes.map((node) => ({ ...node, workspaceId: node.workspaceId ?? workspaceId })),
+    edges: graph.edges.map((edge) => ({ ...edge, workspaceId: edge.workspaceId ?? workspaceId })),
+  };
 }
 
 function slug(input: string) {
@@ -191,7 +245,7 @@ function fallbackDiagnostics(content: string): ParseDiagnostics {
   };
 }
 
-function buildFallbackChunks(documentId: string, content: string): TextChunk[] {
+function buildFallbackChunks(documentId: string, content: string, workspaceId = ADMIN_PUBLIC_WORKSPACE_ID): TextChunk[] {
   const text = content.trim();
   if (text.length < 40) return [];
   return [
@@ -201,15 +255,18 @@ function buildFallbackChunks(documentId: string, content: string): TextChunk[] {
       text: text.slice(0, 850),
       start: 0,
       end: Math.min(text.length, 850),
+      workspaceId,
     },
   ];
 }
 
 function normalizeDocument(document: KnowledgeDocument): KnowledgeDocument {
+  const workspaceId = documentWorkspaceId(document);
   const diagnostics = fallbackDiagnostics(document.sourceText || document.summary || "");
-  const chunks = document.chunks?.length ? document.chunks : buildFallbackChunks(document.id, document.sourceText || "");
+  const chunks = document.chunks?.length ? document.chunks.map((chunk) => ({ ...chunk, workspaceId: chunk.workspaceId ?? workspaceId })) : buildFallbackChunks(document.id, document.sourceText || "", workspaceId);
   return {
     ...document,
+    workspaceId,
     kind: document.kind ?? "unknown",
     parseStatus: document.parseStatus ?? diagnostics.status,
     parseMessage: document.parseMessage ?? diagnostics.message,
@@ -221,14 +278,19 @@ function normalizeDocument(document: KnowledgeDocument): KnowledgeDocument {
   };
 }
 
-function makeDocumentFromAnalysis(file: File, content: string, analysis: AnalysisResult, parsed?: ParsedDocument): KnowledgeDocument {
+function makeDocumentFromAnalysis(file: File, content: string, analysis: AnalysisResult, workspaceId: string, parsed?: ParsedDocument): KnowledgeDocument {
   const stamp = Date.now();
   const id = `user-doc-${stamp}-${slug(file.name) || "upload"}`;
   const diagnostics = parsed?.diagnostics ?? analysis.parsing ?? fallbackDiagnostics(content);
-  const chunks = (parsed?.chunks ?? buildFallbackChunks(id, content)).map((chunk) => ({ ...chunk, id: chunk.id || `${id}-chunk-${chunk.index + 1}` }));
+  const chunks = (parsed?.chunks ?? buildFallbackChunks(id, content, workspaceId)).map((chunk) => ({
+    ...chunk,
+    id: chunk.id || `${id}-chunk-${chunk.index + 1}`,
+    workspaceId,
+  }));
   const confidence = confidenceForDiagnostics(analysis.confidence, diagnostics);
   return {
     id,
+    workspaceId,
     title: file.name,
     kind: parsed?.kind ?? fileKind(file.name),
     sizeLabel: sizeLabel(file.size),
@@ -254,11 +316,12 @@ function confidenceForDiagnostics(baseConfidence: number, diagnostics: ParseDiag
   return baseConfidence;
 }
 
-function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisResult) {
+function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisResult, workspaceId: string) {
   const group = `upload-${slug(document.title) || Date.now()}`;
   const docNodeId = `node-${document.id}`;
   const documentNode: GraphNode = {
     id: docNodeId,
+    workspaceId,
     label: document.title.replace(/\.[^.]+$/, ""),
     type: "document",
     group,
@@ -272,6 +335,7 @@ function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisRe
   const importedNodes = analysis.entities.map((node, index) => ({
     ...node,
     id: node.id || `node-${document.id}-${index}`,
+    workspaceId,
     group: node.group?.startsWith("upload-") ? node.group : group,
     cluster: node.cluster?.startsWith("upload-") ? node.cluster : group,
     sourceDocumentIds: [...new Set([...(node.sourceDocumentIds ?? []), document.id])],
@@ -285,11 +349,13 @@ function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisRe
     .map((edge, index) => ({
       ...edge,
       id: edge.id || `edge-${document.id}-${index}`,
+      workspaceId,
       confidence: Math.min(edge.confidence ?? analysis.confidence, document.confidence),
       evidence: edge.evidence || analysis.summary,
     }));
   const docEdges = importedNodes.slice(0, 18).map<GraphEdge>((node, index) => ({
     id: `edge-${docNodeId}-${node.id}`.replace(/[^a-zA-Z0-9-]/g, "-"),
+    workspaceId,
     from: docNodeId,
     to: node.id,
     label: index === 0 ? "主题" : "提到",
@@ -339,6 +405,7 @@ function recommendationsFor(state: Pick<KnowledgeState, "documents" | "graph" | 
 function buildInitialActivities(): RecentActivity[] {
   return mockDocuments.slice(0, 4).map((document, index) => ({
     id: `activity-demo-${document.id}`,
+    workspaceId: ADMIN_PUBLIC_WORKSPACE_ID,
     type: "upload",
     title: `已入库：${document.title}`,
     detail: document.summary,
@@ -361,10 +428,11 @@ function createInitialState(): KnowledgeState {
 }
 
 function createDemoState(): KnowledgeState {
-  const documents = mockDocuments.map(normalizeDocument).reverse();
+  const documents = mockDocuments.map((document) => normalizeDocument(withDocumentWorkspace(document, ADMIN_PUBLIC_WORKSPACE_ID))).reverse();
+  const demoGraph = withGraphWorkspace(mockGraphData, ADMIN_PUBLIC_WORKSPACE_ID);
   const base: Omit<KnowledgeState, "recommendations"> = {
     documents,
-    graph: compactGraph(mockGraphData),
+    graph: compactGraph(demoGraph),
     outputs: [],
     recentActivities: buildInitialActivities(),
     highlightedNodeIds: [],
@@ -375,11 +443,12 @@ function createDemoState(): KnowledgeState {
 }
 
 function reviveState(value: KnowledgeState): KnowledgeState {
+  const graphWithWorkspace = withGraphWorkspace(value.graph ?? { nodes: [], edges: [] }, ADMIN_PUBLIC_WORKSPACE_ID);
   const base = {
-    documents: (value.documents ?? []).map(normalizeDocument),
-    graph: compactGraph(value.graph ?? { nodes: [], edges: [] }),
-    outputs: value.outputs ?? [],
-    recentActivities: value.recentActivities ?? [],
+    documents: (value.documents ?? []).map((document) => normalizeDocument(withDocumentWorkspace(document, documentWorkspaceId(document)))),
+    graph: compactGraph(graphWithWorkspace),
+    outputs: (value.outputs ?? []).map((output) => ({ ...output, workspaceId: output.workspaceId ?? ADMIN_PUBLIC_WORKSPACE_ID })),
+    recentActivities: (value.recentActivities ?? []).map((activity) => ({ ...activity, workspaceId: activity.workspaceId ?? ADMIN_PUBLIC_WORKSPACE_ID })),
     highlightedNodeIds: value.highlightedNodeIds ?? [],
     copilotContext: value.copilotContext ?? null,
     revision: value.revision ?? 0,
@@ -387,8 +456,8 @@ function reviveState(value: KnowledgeState): KnowledgeState {
   return { ...base, recommendations: recommendationsFor(base) };
 }
 
-function addActivity(state: KnowledgeState, activity: Omit<RecentActivity, "id" | "createdAt">): RecentActivity[] {
-  return [{ ...activity, id: `activity-${activity.type}-${Date.now()}`, createdAt: nowIso() }, ...state.recentActivities].slice(0, 20);
+function addActivity(state: KnowledgeState, activity: Omit<RecentActivity, "id" | "createdAt">, workspaceId = ADMIN_PUBLIC_WORKSPACE_ID): RecentActivity[] {
+  return [{ ...activity, workspaceId, id: `activity-${activity.type}-${Date.now()}`, createdAt: nowIso() }, ...state.recentActivities].slice(0, 60);
 }
 
 function withRecommendations(state: KnowledgeState): KnowledgeState {
@@ -397,8 +466,9 @@ function withRecommendations(state: KnowledgeState): KnowledgeState {
 
 function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): KnowledgeState {
   if (action.type === "ingestAnalysis") {
-    const document = makeDocumentFromAnalysis(action.file, action.content, action.analysis, action.parsed);
-    const imported = sanitizeImportedGraph(document, action.analysis);
+    const workspaceId = workspaceIdOrDefault(action.workspaceId);
+    const document = makeDocumentFromAnalysis(action.file, action.content, action.analysis, workspaceId, action.parsed);
+    const imported = sanitizeImportedGraph(document, action.analysis, workspaceId);
     const nextState: KnowledgeState = {
       ...state,
       documents: [document, ...state.documents.filter((item) => item.id !== document.id)],
@@ -412,13 +482,14 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
           : document.parseMessage,
         documentId: document.id,
         nodeIds: imported.highlightedNodeIds,
-      }),
+      }, workspaceId),
     };
     return withRecommendations(nextState);
   }
 
   if (action.type === "deleteNode") {
-    const target = state.graph.nodes.find((node) => node.id === action.nodeId);
+    const workspaceId = workspaceIdOrDefault(action.workspaceId);
+    const target = state.graph.nodes.find((node) => node.id === action.nodeId && nodeWorkspaceId(node) === workspaceId);
     if (!target) return state;
     return withRecommendations({
       ...state,
@@ -433,11 +504,12 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
   }
 
   if (action.type === "deleteDocument") {
-    const document = state.documents.find((item) => item.id === action.documentId);
+    const workspaceId = workspaceIdOrDefault(action.workspaceId);
+    const document = state.documents.find((item) => item.id === action.documentId && documentWorkspaceId(item) === workspaceId);
     if (!document) return state;
     const keptNodes = state.graph.nodes
       .map((node) => {
-        if (!node.sourceDocumentIds?.includes(action.documentId)) return node;
+        if (nodeWorkspaceId(node) !== workspaceId || !node.sourceDocumentIds?.includes(action.documentId)) return node;
         const rest = node.sourceDocumentIds.filter((id) => id !== action.documentId);
         if (node.type === "document" || rest.length === 0) return null;
         return { ...node, sourceDocumentIds: rest };
@@ -455,11 +527,16 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
   }
 
   if (action.type === "clearGraph") {
+    const workspaceId = workspaceIdOrDefault(action.workspaceId);
+    const nodesById = new Map(state.graph.nodes.map((node) => [node.id, node]));
     return withRecommendations({
       ...state,
-      documents: [],
-      graph: { nodes: [], edges: [] },
-      outputs: [],
+      documents: state.documents.filter((document) => documentWorkspaceId(document) !== workspaceId),
+      graph: {
+        nodes: state.graph.nodes.filter((node) => nodeWorkspaceId(node) !== workspaceId),
+        edges: state.graph.edges.filter((edge) => edgeWorkspaceId(edge, nodesById) !== workspaceId),
+      },
+      outputs: state.outputs.filter((output) => outputWorkspaceId(output) !== workspaceId),
       highlightedNodeIds: [],
       copilotContext: null,
       recentActivities: [{ id: `activity-clear-${Date.now()}`, type: "clear", title: "已清空知识星图", detail: "资料、节点、关系和成果已清空，可重新导入第一份资料。", createdAt: nowIso() }],
@@ -469,19 +546,26 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
   if (action.type === "resetDemo") return createDemoState();
 
   if (action.type === "addOutput") {
+    const workspaceId = workspaceIdOrDefault(action.workspaceId);
     const relatedNode = action.relatedNodeId
-      ? state.graph.nodes.find((node) => node.id === action.relatedNodeId)
+      ? state.graph.nodes.find((node) => node.id === action.relatedNodeId && nodeWorkspaceId(node) === workspaceId)
       : state.copilotContext?.nodeId
-        ? state.graph.nodes.find((node) => node.id === state.copilotContext?.nodeId)
+        ? state.graph.nodes.find((node) => node.id === state.copilotContext?.nodeId && nodeWorkspaceId(node) === workspaceId)
         : null;
-    const sourceDocumentIds = action.output.sources.filter((source) => source.sourceType !== "web").map((source) => source.documentId);
+    const normalizedOutput = {
+      ...action.output,
+      workspaceId,
+      sources: action.output.sources.map((source) => ({ ...source, workspaceId: source.workspaceId ?? workspaceId })),
+    };
+    const sourceDocumentIds = normalizedOutput.sources.filter((source) => source.sourceType !== "web").map((source) => source.documentId);
     const outputNode: GraphNode = {
-      id: `output-node-${action.output.id}`,
-      label: action.output.title,
+      id: `output-node-${normalizedOutput.id}`,
+      workspaceId,
+      label: normalizedOutput.title,
       type: action.nodeType ?? "output",
       group: relatedNode?.group ?? "outputs",
       cluster: relatedNode?.cluster ?? "outputs",
-      description: action.output.body.slice(0, 180),
+      description: normalizedOutput.body.slice(0, 180),
       sourceDocumentIds,
       value: 18,
       confidence: 0.86,
@@ -489,6 +573,7 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
     const edge: GraphEdge | null = relatedNode
       ? {
           id: `edge-${relatedNode.id}-${outputNode.id}`.replace(/[^a-zA-Z0-9-]/g, "-"),
+          workspaceId,
           from: relatedNode.id,
           to: outputNode.id,
           label: "生成",
@@ -500,7 +585,7 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
       : null;
     return withRecommendations({
       ...state,
-      outputs: [action.output, ...state.outputs.filter((item) => item.id !== action.output.id)],
+      outputs: [normalizedOutput, ...state.outputs.filter((item) => item.id !== normalizedOutput.id)],
       graph: mergeGraphs(state.graph, { nodes: [outputNode], edges: edge ? [edge] : [] }),
       highlightedNodeIds: [outputNode.id],
       recentActivities: addActivity(state, { type: "generate", title: `已保存成果：${action.output.title}`, detail: "成果已挂载为星图节点。", outputId: action.output.id, nodeIds: [outputNode.id] }),
@@ -531,26 +616,94 @@ function loadInitialState() {
   }
 }
 
+function selectWorkspaceState(raw: KnowledgeState, workspace: Workspace | null, access: WorkspaceAccess | null): KnowledgeState {
+  const workspaceId = workspaceIdOrDefault(workspace?.id);
+  const documents = raw.documents.filter((document) => documentWorkspaceId(document) === workspaceId);
+  const documentIds = new Set(documents.map((document) => document.id));
+  const nodes = raw.graph.nodes.filter((node) => {
+    if (nodeWorkspaceId(node) === workspaceId) return true;
+    return Boolean(node.sourceDocumentIds?.some((documentId) => documentIds.has(documentId)));
+  });
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const nodesById = new Map(raw.graph.nodes.map((node) => [node.id, node]));
+  const edges = raw.graph.edges.filter((edge) => edgeWorkspaceId(edge, nodesById) === workspaceId && nodeIds.has(edge.from) && nodeIds.has(edge.to));
+  const outputs = raw.outputs.filter((output) => outputWorkspaceId(output) === workspaceId);
+  const recentActivities = raw.recentActivities.filter((activity) => activityWorkspaceId(activity) === workspaceId);
+  const base: Omit<KnowledgeState, "recommendations"> = {
+    workspaceId,
+    workspace,
+    access,
+    documents,
+    graph: compactGraph({ nodes, edges }),
+    outputs,
+    recentActivities,
+    highlightedNodeIds: raw.highlightedNodeIds.filter((nodeId) => nodeIds.has(nodeId)),
+    copilotContext: raw.copilotContext?.workspaceId && raw.copilotContext.workspaceId !== workspaceId ? null : raw.copilotContext,
+    revision: raw.revision,
+  };
+  return { ...base, recommendations: recommendationsFor(base) };
+}
+
+function permissionDeniedMessage(workspace: Workspace | null) {
+  return workspace?.type === "admin_public"
+    ? "你当前只有查看权限，不能修改管理员共享星图。"
+    : "你当前没有编辑该知识空间的权限。";
+}
+
 export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(knowledgeReducer, undefined, loadInitialState);
+  const { currentUser, currentWorkspace, currentAccess } = useAuthStore();
+  const workspaceId = workspaceIdOrDefault(currentWorkspace?.id);
+  const canEditCurrentWorkspace = canEditWorkspace(currentUser, currentWorkspace);
+  const scopedState = useMemo(() => selectWorkspaceState(state, currentWorkspace, currentAccess), [currentAccess, currentWorkspace, state]);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
+  function guardWrite() {
+    if (canEditCurrentWorkspace) return true;
+    if (typeof window !== "undefined") window.alert(permissionDeniedMessage(currentWorkspace));
+    return false;
+  }
+
   const value = useMemo<KnowledgeContextValue>(
     () => ({
-      state,
-      ingestAnalysis: (file, content, analysis, parsed) => dispatch({ type: "ingestAnalysis", file, content, analysis, parsed }),
-      deleteNode: (nodeId) => dispatch({ type: "deleteNode", nodeId }),
-      deleteDocument: (documentId) => dispatch({ type: "deleteDocument", documentId }),
-      clearGraph: () => dispatch({ type: "clearGraph" }),
-      resetDemo: () => dispatch({ type: "resetDemo" }),
-      addOutput: (output, relatedNodeId, nodeType) => dispatch({ type: "addOutput", output, relatedNodeId, nodeType }),
-      setCopilotContext: (context) => dispatch({ type: "setCopilotContext", context }),
-      recordAsk: (question) => dispatch({ type: "recordAsk", question }),
+      state: scopedState,
+      currentWorkspace,
+      currentAccess,
+      canEditCurrentWorkspace,
+      ingestAnalysis: (file, content, analysis, parsed) => {
+        if (!guardWrite()) return;
+        dispatch({ type: "ingestAnalysis", workspaceId, file, content, analysis, parsed });
+      },
+      deleteNode: (nodeId) => {
+        if (!guardWrite()) return;
+        dispatch({ type: "deleteNode", workspaceId, nodeId });
+      },
+      deleteDocument: (documentId) => {
+        if (!guardWrite()) return;
+        dispatch({ type: "deleteDocument", workspaceId, documentId });
+      },
+      clearGraph: () => {
+        if (!guardWrite()) return;
+        dispatch({ type: "clearGraph", workspaceId });
+      },
+      resetDemo: () => {
+        if (!guardWrite()) return;
+        dispatch({ type: "resetDemo" });
+      },
+      addOutput: (output, relatedNodeId, nodeType) => {
+        if (!guardWrite()) return;
+        dispatch({ type: "addOutput", workspaceId, output, relatedNodeId, nodeType });
+      },
+      setCopilotContext: (context) => dispatch({ type: "setCopilotContext", context: context ? { ...context, workspaceId } : null }),
+      recordAsk: (question) => {
+        if (!canEditCurrentWorkspace) return;
+        dispatch({ type: "recordAsk", workspaceId, question });
+      },
     }),
-    [state],
+    [canEditCurrentWorkspace, currentAccess, currentWorkspace, scopedState, workspaceId],
   );
 
   return <KnowledgeContext.Provider value={value}>{children}</KnowledgeContext.Provider>;

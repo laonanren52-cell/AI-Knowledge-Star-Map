@@ -20,6 +20,7 @@ export type GraphRelationType =
 
 export interface GraphNode {
   id: string;
+  workspaceId?: string;
   label: string;
   type: GraphNodeType;
   group: string;
@@ -34,6 +35,7 @@ export interface GraphNode {
 
 export interface GraphEdge {
   id: string;
+  workspaceId?: string;
   from: string;
   to: string;
   label?: string;
@@ -45,6 +47,7 @@ export interface GraphEdge {
 
 export interface SourceReference {
   sourceType?: "local" | "web";
+  workspaceId?: string;
   documentId: string;
   documentTitle: string;
   snippet: string;
