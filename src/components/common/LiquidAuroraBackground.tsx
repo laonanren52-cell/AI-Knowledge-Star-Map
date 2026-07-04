@@ -57,24 +57,24 @@ const fragmentShaderSource = `
 
     float f = fbm(st + r);
 
-    vec3 ink = vec3(0.008, 0.015, 0.032);
-    vec3 deepBlue = vec3(0.0, 0.14, 0.27);
-    vec3 violet = vec3(0.16, 0.055, 0.27);
-    vec3 glacier = vec3(0.16, 0.95, 0.9);
+    vec3 ceramic = vec3(0.965, 0.975, 0.99);
+    vec3 mist = vec3(0.89, 0.925, 0.96);
+    vec3 blue = vec3(0.0, 0.33, 0.75);
+    vec3 cyan = vec3(0.0, 0.58, 0.62);
 
-    vec3 color = mix(ink, deepBlue, clamp(f * f * 3.0, 0.0, 1.0));
-    color = mix(color, violet, clamp(length(q) * 0.5, 0.0, 1.0));
-    color = mix(color, glacier, clamp(length(r) * 0.28, 0.0, 1.0));
+    vec3 color = mix(ceramic, mist, clamp(f * f * 2.6, 0.0, 1.0));
+    color = mix(color, blue, clamp(length(q) * 0.12, 0.0, 1.0));
+    color = mix(color, cyan, clamp(length(r) * 0.1, 0.0, 1.0));
 
     vec2 mouseNorm = u_mouse / u_res;
     mouseNorm.y = 1.0 - mouseNorm.y;
     float dist = length((gl_FragCoord.xy / u_res.xy) - mouseNorm);
-    color += vec3(0.0, 0.55, 0.82) * smoothstep(0.44, 0.0, dist) * 0.24;
+    color += vec3(0.0, 0.32, 0.78) * smoothstep(0.44, 0.0, dist) * 0.08;
 
     float vignette = smoothstep(1.05, 0.22, length((gl_FragCoord.xy / u_res.xy) - vec2(0.5)));
-    color *= mix(0.56, 1.08, vignette);
+    color *= mix(0.95, 1.04, vignette);
 
-    gl_FragColor = vec4(color, 0.98);
+    gl_FragColor = vec4(color, 0.78);
   }
 `;
 
