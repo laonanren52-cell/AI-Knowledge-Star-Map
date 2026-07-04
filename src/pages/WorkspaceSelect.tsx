@@ -1,5 +1,6 @@
 import { ArrowRight, DatabaseZap, LockKeyhole, LogOut, Settings, ShieldCheck, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
+import AmbientVisualLayer from "../components/common/AmbientVisualLayer";
 import { roleLabel } from "../services/authService";
 import { useAuthStore } from "../store/authStore";
 import { ADMIN_PUBLIC_WORKSPACE_ID, privateWorkspaceId, type Workspace } from "../types/workspace";
@@ -24,9 +25,7 @@ export default function WorkspaceSelect({ onEnter }: WorkspaceSelectProps) {
 
   return (
     <main className="visual-workspace thin-scrollbar relative min-h-screen overflow-x-hidden bg-[var(--page-bg)] px-4 py-8 text-[var(--text-secondary)]">
-      <div className="cosmic-backdrop" />
-      <div className="aurora-layer" />
-      <div className="noise-layer" />
+      <AmbientVisualLayer />
       <section className="relative z-10 mx-auto max-w-6xl">
         <header className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
@@ -40,7 +39,7 @@ export default function WorkspaceSelect({ onEnter }: WorkspaceSelectProps) {
           </button>
         </header>
 
-        <div className="grid gap-5 lg:grid-cols-3">
+        <div className="workspace-card-grid grid gap-5 lg:grid-cols-3">
           <WorkspaceCard
             icon={<UsersRound className="h-5 w-5" />}
             title="管理员共享星图"
@@ -75,7 +74,7 @@ export default function WorkspaceSelect({ onEnter }: WorkspaceSelectProps) {
           )}
         </div>
 
-        <div className="lux-card mt-6 rounded-3xl p-5">
+        <div className="lux-card workspace-note mt-6 rounded-3xl p-5">
           <div className="flex items-start gap-3">
             <span className="icon-tile">
               {currentUser.role === "admin" ? <Settings className="h-5 w-5" /> : <DatabaseZap className="h-5 w-5" />}
@@ -113,7 +112,7 @@ function WorkspaceCard({
   onClick: () => void;
 }) {
   return (
-    <article className={`lux-card hover-lift rounded-3xl p-6 ${strong ? "border-[var(--accent-border)] bg-[var(--selected-bg)]" : ""}`}>
+    <article className={`lux-card workspace-select-card hover-lift rounded-3xl p-6 ${strong ? "is-strong border-[var(--accent-border)] bg-[var(--selected-bg)]" : ""}`}>
       <div className="mb-5 flex items-center justify-between gap-3">
         <span className="icon-tile">{icon}</span>
         <span className="rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-3 py-1 text-xs text-[var(--accent)]">{badge}</span>

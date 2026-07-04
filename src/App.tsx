@@ -1,5 +1,6 @@
 import { Bot, DatabaseZap, FileUp, GitBranch, Home, Layers3, LogOut, Settings, Sparkles, UsersRound, type LucideIcon } from "lucide-react";
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
+import AmbientVisualLayer from "./components/common/AmbientVisualLayer";
 import AiModeBadge from "./components/common/AiModeBadge";
 import WorkspaceBadge from "./components/common/WorkspaceBadge";
 import AdminSettings from "./pages/AdminSettings";
@@ -28,7 +29,6 @@ const navItems: Array<{ key: PageKey; label: string; icon: LucideIcon }> = [
 function App() {
   const [page, setPage] = useState<PageKey>("dashboard");
   const [authPage, setAuthPage] = useState<"login" | "register">("login");
-  const [pointer, setPointer] = useState({ x: 50, y: 12 });
   const { currentUser, currentWorkspace, logout, clearWorkspaceSelection } = useAuthStore();
   const { canEditCurrentWorkspace } = useKnowledgeStore();
   const canAccessAdminPanel = currentUser?.role === "admin" && currentUser.canAccessAdminPanel !== false;
@@ -68,17 +68,8 @@ function App() {
   return (
     <main
       className={cn("app-viewport relative min-h-screen w-full max-w-full overflow-x-hidden bg-[var(--page-bg)] text-[var(--text-secondary)]", visualClassByPage[page])}
-      style={{ "--mx": `${pointer.x}%`, "--my": `${pointer.y}%` } as CSSProperties}
-      onPointerMove={(event) => {
-        setPointer({
-          x: Math.round((event.clientX / Math.max(1, window.innerWidth)) * 100),
-          y: Math.round((event.clientY / Math.max(1, window.innerHeight)) * 100),
-        });
-      }}
     >
-      <div className="cosmic-backdrop" />
-      <div className="aurora-layer" />
-      <div className="noise-layer" />
+      <AmbientVisualLayer />
 
       <header className="sticky top-0 z-40 px-3 pt-3 md:px-6">
         <div className="topbar-glass app-topbar mx-auto max-w-[1500px] px-3 py-2 md:px-4">
