@@ -339,6 +339,27 @@ export async function askWithSources(question: string, documents: KnowledgeDocum
   if (!question.trim()) throw new Error("请输入需要基于资料回答的问题。");
 
   const localSources = collectLocalSources(question, documents, options.context);
+  if (provider !== "mock") {
+    const warnings = [
+      mode === "library" && hasWebIntent(question) ? "当前为仅资料库模式，不会联网检索。需要最新资料时请切换到联网增强或混合验证。" : null,
+    ].filter((item): item is string => Boolean(item));
+
+    return callApiStrict("askWithSources", async () =>
+      normalizeApiAnswer(
+        await postApi<QAResult>("/api/ai/ask", {
+          question,
+          mode,
+          documents: documents.filter((document) => document.canAnswer),
+          localSources,
+          context: options.context,
+          allowMock: false,
+        }),
+        mode,
+        warnings,
+      ),
+    );
+  }
+
   const webNeeded = shouldUseWeb(question, mode, localSources);
   const webResult = webNeeded ? await searchWeb(question) : { sources: [] as WebSourceReference[] };
   const warnings = [
@@ -357,24 +378,6 @@ export async function askWithSources(question: string, documents: KnowledgeDocum
       warnings,
       sourceStatus: provider === "mock" ? "mock" : "local_rule",
     };
-  }
-
-  if (provider !== "mock") {
-    return callApiStrict("askWithSources", async () =>
-      normalizeApiAnswer(
-        await postApi<QAResult>("/api/ai/ask", {
-          question,
-          mode,
-          documents: documents.filter((document) => document.canAnswer),
-          localSources,
-          webSources: webResult.sources,
-          context: options.context,
-          allowMock: false,
-        }),
-        mode,
-        warnings,
-      ),
-    );
   }
 
   await delay(240);

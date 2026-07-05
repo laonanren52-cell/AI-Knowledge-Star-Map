@@ -38,7 +38,7 @@ function questionFromContext(context: ReturnType<typeof useKnowledgeStore>["stat
 
 export default function AIChatPanel() {
   const { state, recordAsk, addOutput, canEditCurrentWorkspace } = useKnowledgeStore();
-  const { markAiSuccess, markAiFailure } = useAiStatus();
+  const { status: aiStatus, refreshHealth, markAiSuccess, markAiFailure } = useAiStatus();
   const [answerMode, setAnswerMode] = useState<AnswerMode>(state.copilotContext?.answerMode ?? "hybrid");
   const [question, setQuestion] = useState(() => questionFromContext(state.copilotContext));
   const [result, setResult] = useState<QAResult | null>(null);
@@ -55,6 +55,8 @@ export default function AIChatPanel() {
   const contextDocuments = state.copilotContext?.relatedDocumentIds?.length
     ? state.documents.filter((document) => state.copilotContext?.relatedDocumentIds?.includes(document.id))
     : answerableDocuments;
+  const searchProviderLabel = formatSearchProvider(aiStatus.searchProvider);
+  const webSearchStatusLabel = aiStatus.searchConfigured ? `联网搜索：${searchProviderLabel} 已配置` : "联网搜索：未配置";
 
   const confidenceLabel = useMemo(() => {
     if (!result) return "等待资料问题";
@@ -79,7 +81,7 @@ export default function AIChatPanel() {
     setCopied(false);
     try {
       await new Promise((resolve) => window.setTimeout(resolve, 160));
-      setStatus(mode === "library" ? "正在基于资料库生成回答" : "正在检查联网增强状态");
+      setStatus(mode === "library" ? "正在基于资料库生成回答" : "正在向后端提交联网增强请求");
       const response = await askWithSources(nextQuestion, state.documents, { mode, context: state.copilotContext });
       markAiSuccess("ask");
       setResult(response);
@@ -87,9 +89,10 @@ export default function AIChatPanel() {
     } catch (err) {
       markAiFailure("ask", err);
       setError(err instanceof Error ? err.message : "AI 回答失败，请稍后重试。");
+      setStatus("请求失败");
     } finally {
       setLoading(false);
-      setStatus("回答完成");
+      setStatus((current) => (current === "请求失败" ? current : "回答完成"));
     }
   }
 
@@ -117,6 +120,10 @@ export default function AIChatPanel() {
     }, 12);
     return () => window.clearInterval(timer);
   }, [result]);
+
+  useEffect(() => {
+    void refreshHealth();
+  }, [refreshHealth]);
 
   useEffect(() => {
     const next = questionFromContext(state.copilotContext);
@@ -357,13 +364,14 @@ export default function AIChatPanel() {
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-secondary)]">
               <Globe2 className="h-4 w-4 text-[var(--accent)]" />
               网页来源
+              <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-2 py-1 text-xs text-[var(--text-faint)]">{webSearchStatusLabel}</span>
             </div>
             <div className="space-y-3">
               {(result?.webSources ?? []).length > 0 ? (
                 result?.webSources?.map((source) => <SourceCard key={`${source.url}-${source.retrievedAt}`} webSource={source} />)
               ) : (
                 <div className="empty-orbit rounded-3xl p-4 text-sm leading-7 text-[var(--text-faint)]">
-                  {answerMode === "library" ? "仅资料库模式不会检索网页。" : "联网搜索暂未配置，请在后端配置搜索 API。"}
+                  {webSourceEmptyMessage(answerMode, aiStatus.searchConfigured, aiStatus.connection)}
                 </div>
               )}
             </div>
@@ -379,4 +387,17 @@ function sourceStatusLabel(status?: QAResult["sourceStatus"]) {
   if (status === "api") return "真实 AI";
   if (status === "local_rule") return "本地规则";
   return "Mock 演示";
+}
+
+function formatSearchProvider(provider?: string) {
+  if (!provider || provider === "none") return "搜索服务";
+  if (provider.toLowerCase() === "tavily") return "Tavily";
+  return provider;
+}
+
+function webSourceEmptyMessage(mode: AnswerMode, searchConfigured: boolean, connection: string) {
+  if (mode === "library") return "仅资料库模式不会检索网页。";
+  if (searchConfigured) return "联网搜索已配置，当前回答暂无网页来源。";
+  if (connection === "checking") return "正在读取联网搜索配置。";
+  return "联网搜索暂未配置，请在后端配置搜索 API。";
 }

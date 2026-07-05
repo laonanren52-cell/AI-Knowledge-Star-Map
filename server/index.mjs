@@ -760,15 +760,35 @@ async function analyze(payload) {
 
 async function ask(payload) {
   const question = String(payload.question || "");
+  const mode = String(payload.mode || "hybrid");
   const allowMock = payload.allowMock !== false;
   if (!question.trim()) throw new Error("问题为空，无法回答。");
   const localSources = Array.isArray(payload.localSources) ? payload.localSources.map(normalizeSource) : [];
-  const webSources = Array.isArray(payload.webSources) ? payload.webSources.map(normalizeWebSource) : [];
+  let webSources = Array.isArray(payload.webSources) ? payload.webSources.map(normalizeWebSource) : [];
+  const searchWarnings = [];
+  const shouldSearchWeb = mode === "web" || (mode === "hybrid" && localSources.length < 2);
+
+  if (shouldSearchWeb && webSources.length === 0) {
+    const searchConfig = getSearchConfig();
+    if (!searchConfig.enabled || !searchConfig.configured) {
+      searchWarnings.push("联网搜索暂未配置，请在后端配置搜索 API。");
+    } else {
+      try {
+        const searchResult = await searchWeb({ query: question });
+        webSources = Array.isArray(searchResult.sources) ? searchResult.sources.map(normalizeWebSource) : [];
+        if (searchResult.warning) searchWarnings.push(String(searchResult.warning));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error || "搜索服务请求失败。");
+        searchWarnings.push(`联网搜索失败：${reason}`);
+      }
+    }
+  }
+
   if (localSources.length === 0 && webSources.length === 0) {
     return {
       ...mockAsk(question, [], []),
       sourceStatus: "local_rule",
-      warnings: ["当前文件尚未生成可用正文片段，无法进行可靠回答。"],
+      warnings: [...searchWarnings, "当前文件尚未生成可用正文片段，无法进行可靠回答。"],
     };
   }
 
@@ -777,15 +797,23 @@ async function ask(payload) {
       { role: "system", content: systemPrompt() },
       {
         role: "user",
-        content: `请基于 sources 回答问题并返回 JSON，字段必须包含 answer,sources,webSources,confidence,warnings。\n问题：${question}\n本地来源：${JSON.stringify(localSources).slice(0, 12000)}\n网页来源：${JSON.stringify(webSources).slice(0, 6000)}\n上下文：${JSON.stringify(payload.context || {}).slice(0, 3000)}`,
+        content: `请基于 sources 回答问题并返回 JSON，字段必须包含 answer,sources,webSources,confidence,warnings。\n问题：${question}\n回答模式：${mode}\n本地来源：${JSON.stringify(localSources).slice(0, 12000)}\n网页来源：${JSON.stringify(webSources).slice(0, 6000)}\n搜索状态：${searchWarnings.join("；") || "搜索状态正常或无需联网"}\n上下文：${JSON.stringify(payload.context || {}).slice(0, 3000)}`,
       },
     ],
     0.28,
     allowMock,
   );
-  if (modelJson) return normalizeAsk(modelJson);
+  if (modelJson) {
+    const normalized = normalizeAsk(modelJson);
+    return {
+      ...normalized,
+      webSources: normalized.webSources.length ? normalized.webSources : webSources,
+      warnings: [...new Set([...searchWarnings, ...normalized.warnings])],
+    };
+  }
   if (!allowMock) throw new Error("真实 AI 未返回问答结果。");
-  return { ...mockAsk(question, localSources, webSources), sourceStatus: "mock" };
+  const fallback = mockAsk(question, localSources, webSources);
+  return { ...fallback, warnings: [...new Set([...searchWarnings, ...(fallback.warnings ?? [])])], sourceStatus: "mock" };
 }
 
 async function generateOutput(payload) {
