@@ -5,7 +5,7 @@ import type { AnswerMode, GeneratedOutput, GeneratedOutputType, QAResult, WebSou
 import type { KnowledgeDocument, ParsedDocument } from "../types/document";
 import type { AnalysisResult, GraphData, GraphEdge, GraphNode, GraphNodeType, SourceReference } from "../types/graph";
 
-const provider = import.meta.env.VITE_AI_PROVIDER ?? "mock";
+const provider = (import.meta.env.VITE_AI_PROVIDER ?? "api").trim().toLowerCase() || "api";
 
 export type ClientAiProvider = "mock" | "api" | "deepseek" | "openai" | "local" | string;
 
@@ -192,6 +192,9 @@ function getMockAnalysis(content: string, fileName?: string, parsed?: ParsedDocu
     sources: sourceFromContent(content, fileName),
     confidence: confidenceForParsed(preset.confidence, parsed),
     parsing: parsed?.diagnostics,
+    provider: "mock",
+    sourceStatus: "mock",
+    analyzedAt: new Date().toISOString(),
   };
 }
 
@@ -216,6 +219,9 @@ export function buildUnavailableAnalysis(fileName: string, parsed: ParsedDocumen
     sources: [],
     confidence: 0.18,
     parsing: parsed.diagnostics,
+    provider: "local_rule",
+    sourceStatus: "local_rule",
+    analyzedAt: new Date().toISOString(),
   };
 }
 
@@ -257,6 +263,9 @@ function normalizeApiAnalysis(value: AnalysisResult): AnalysisResult {
     outputs: value.outputs ?? [],
     sources: (value.sources ?? []).map(normalizeSourceReference),
     confidence: value.confidence ?? 0.75,
+    provider: value.provider ?? provider,
+    sourceStatus: value.sourceStatus ?? "api",
+    analyzedAt: value.analyzedAt ?? new Date().toISOString(),
   };
 }
 
@@ -287,18 +296,12 @@ function normalizeApiOutput(value: GeneratedOutput & { content?: string }, type:
 
 export async function analyzeDocument(content: string, fileName?: string, parsed?: ParsedDocument): Promise<AnalysisResult> {
   if (!content.trim()) throw new Error("当前文件正文解析失败，暂不能用于可靠 AI 分析。");
-  if (provider === "api") {
+  if (provider !== "mock") {
     return callApiStrict("analyzeDocument", async () =>
       normalizeApiAnalysis(await postApi<AnalysisResult>("/api/ai/analyze", { content, fileName, parsing: parsed?.diagnostics, allowMock: false })),
     );
   }
   await delay(260);
-  return getMockAnalysis(content, fileName, parsed);
-}
-
-export async function analyzeDocumentMock(content: string, fileName?: string, parsed?: ParsedDocument): Promise<AnalysisResult> {
-  if (!content.trim()) throw new Error("当前文件正文解析失败，暂不能用于 mock 分析。");
-  await delay(180);
   return getMockAnalysis(content, fileName, parsed);
 }
 
@@ -356,7 +359,7 @@ export async function askWithSources(question: string, documents: KnowledgeDocum
     };
   }
 
-  if (provider === "api") {
+  if (provider !== "mock") {
     return callApiStrict("askWithSources", async () =>
       normalizeApiAnswer(
         await postApi<QAResult>("/api/ai/ask", {
@@ -474,7 +477,7 @@ function modeLabel(mode: AnswerMode) {
 }
 
 export async function generateOutput(type: GeneratedOutputType, context?: unknown): Promise<GeneratedOutput> {
-  if (provider === "api") {
+  if (provider !== "mock") {
     return callApiStrict("generateOutput", async () =>
       normalizeApiOutput(await postApi<GeneratedOutput & { content?: string }>("/api/ai/generate-output", { type, context, allowMock: false }), type),
     );

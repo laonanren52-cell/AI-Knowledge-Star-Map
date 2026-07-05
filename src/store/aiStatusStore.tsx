@@ -58,10 +58,9 @@ function nowIso() {
 }
 
 function initialState(): RuntimeState {
-  const client = getClientAiConfig();
   return {
     backend: null,
-    connection: client.provider === "api" ? "checking" : "mock",
+    connection: "checking",
     lastSuccessAt: null,
     lastFailedAt: null,
     lastError: null,
@@ -74,7 +73,7 @@ function aiStatusReducer(state: RuntimeState, action: AiStatusAction): RuntimeSt
     return { ...state, connection: "checking" };
   }
   if (action.type === "healthSuccess") {
-    const connection: AiConnectionState = action.backend.ok ? (action.backend.provider === "mock" ? "degraded" : "connected") : "offline";
+    const connection: AiConnectionState = action.backend.ok ? (action.backend.provider === "mock" ? "mock" : "connected") : "offline";
     return {
       ...state,
       backend: action.backend,
@@ -86,10 +85,9 @@ function aiStatusReducer(state: RuntimeState, action: AiStatusAction): RuntimeSt
     return { ...state, backend: null, connection: "offline", lastError: action.error, lastFailedAt: nowIso(), lastOperation: "health" };
   }
   if (action.type === "success") {
-    const client = getClientAiConfig();
     return {
       ...state,
-      connection: client.provider === "api" ? (state.backend?.provider === "mock" ? "degraded" : "connected") : "mock",
+      connection: state.backend?.provider === "mock" ? "mock" : "connected",
       lastSuccessAt: nowIso(),
       lastError: null,
       lastOperation: action.operation,
@@ -124,8 +122,7 @@ function statusTone(connection: AiConnectionState): AiStatusTone {
   return "warning";
 }
 
-function providerLabel(clientProvider: string, backend: BackendHealth | null) {
-  if (clientProvider !== "api") return "Mock 演示模式";
+function providerLabel(_clientProvider: string, backend: BackendHealth | null) {
   if (!backend) return "API 代理检测中";
   if (backend.provider === "mock") return "后端 Mock 演示";
   return `${backend.provider} · ${backend.model}`;
@@ -146,10 +143,6 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
   const client = getClientAiConfig();
 
   const refreshHealth = useCallback(async () => {
-    if (client.provider !== "api") {
-      dispatch({ type: "clearError" });
-      return;
-    }
     dispatch({ type: "checking" });
     try {
       const backend = await getBackendAiHealth();
@@ -157,7 +150,7 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       dispatch({ type: "healthFailure", error: errorMessage(error) });
     }
-  }, [client.provider]);
+  }, []);
 
   useEffect(() => {
     dispatch({ type: "resetWorkspace" });
@@ -167,10 +160,10 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
   const status = useMemo<AiRuntimeStatus>(() => {
     const usableDocuments = state.documents.filter((document) => document.canAnswer).length;
     const chunkCount = state.documents.reduce((sum, document) => sum + (document.canAnswer ? document.chunks.length : 0), 0);
-    const provider = client.provider;
     const backend = runtime.backend;
-    const connection = provider === "api" ? runtime.connection : "mock";
-    const model = provider === "api" ? (backend?.model ?? "pending") : "mock";
+    const provider = backend?.provider ?? client.provider;
+    const connection = runtime.connection;
+    const model = backend?.model ?? "pending";
     const searchEnabled = Boolean(backend?.search?.enabled);
     const searchConfigured = Boolean(backend?.search?.configured ?? backend?.search?.enabled);
     const ocrEnabled = Boolean(backend?.ocr?.enabled);
@@ -181,7 +174,7 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
       provider,
       providerLabel: providerLabel(provider, backend),
       model,
-      isMockMode: provider !== "api" || backend?.provider === "mock",
+      isMockMode: backend?.provider === "mock",
       searchEnabled,
       searchConfigured,
       searchProvider: backend?.search?.provider ?? "none",
@@ -201,7 +194,7 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
       connection === "connected"
         ? `${usableDocuments}/${state.documents.length} 份资料可问答，${chunkCount} 个来源片段`
         : runtime.lastError ||
-          (connection === "mock" || backend?.provider === "mock"
+          (backend?.provider === "mock"
             ? "未配置真实模型时仍可演示完整链路"
             : "搜索 / OCR 未配置不会影响本地资料问答");
     return next;

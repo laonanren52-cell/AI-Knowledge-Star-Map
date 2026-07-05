@@ -20,7 +20,7 @@ export default function AiModeBadge({ compact = false }: AiModeBadgeProps) {
     `模型：${status.providerLabel}`,
     `本地资料：${status.usableDocuments}/${status.totalDocuments}`,
     `可用片段：${status.chunkCount}`,
-    `联网搜索：${status.searchEnabled ? status.searchProvider : "未配置"}`,
+    `联网搜索：${status.searchConfigured ? `${status.searchProvider} 已配置` : "未配置"}`,
     `OCR：${status.ocrEnabled ? "已开启" : "未配置"}`,
     status.lastError ? `最近错误：${status.lastError}` : null,
   ]
@@ -42,7 +42,7 @@ export default function AiModeBadge({ compact = false }: AiModeBadgeProps) {
           <FileSearch className="h-3.5 w-3.5 shrink-0 opacity-70" />
           <span className="shrink-0">{status.chunkCount}</span>
           <Globe2 className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          <span className="shrink-0">{status.searchEnabled ? "搜索" : "搜索未配"}</span>
+          <span className="shrink-0">{status.searchConfigured ? status.searchProvider : "搜索未配"}</span>
           <ScanText className="h-3.5 w-3.5 shrink-0 opacity-70" />
           <span className="shrink-0">{status.ocrEnabled ? "OCR" : "OCR未配"}</span>
           <Bot className="h-3.5 w-3.5 shrink-0 opacity-70" />

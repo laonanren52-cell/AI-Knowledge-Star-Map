@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, Clock, FileText, Globe2, Layers3, Link2, Search, Sparkles, Trash2 } from "lucide-react";
+import { Bot, ChevronDown, Clock, FileText, Globe2, Layers3, Link2, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
 import { nodeTypeMeta } from "../../data/mockGraphData";
@@ -20,6 +20,7 @@ interface NodeDetailPanelProps {
   onGenerate: (kind: string) => void;
   onAskNode: (intent: NodeIntent) => void;
   onDeleteNode: () => void;
+  onReanalyzeDocument: (documentId: string) => void;
 }
 
 const outputActions = ["简历项目经历", "项目答辩稿", "PPT 大纲", "面试问答"];
@@ -35,6 +36,7 @@ export default function NodeDetailPanel({
   onGenerate,
   onAskNode,
   onDeleteNode,
+  onReanalyzeDocument,
 }: NodeDetailPanelProps) {
   if (!node) {
     return (
@@ -149,6 +151,13 @@ export default function NodeDetailPanel({
                   </span>
                 </div>
                 <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--text-faint)]">{document.canAnswer ? document.summary : document.parseMessage}</p>
+                {document.analysisSourceStatus === "mock" && <p className="mt-2 text-xs text-[var(--warning)]">历史 mock 数据</p>}
+                {canEdit && document.canAnswer && (
+                  <button type="button" onClick={() => onReanalyzeDocument(document.id)} className="btn-secondary mt-3 w-full justify-center py-2 text-xs">
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    重新分析当前资料
+                  </button>
+                )}
               </div>
             ))}
             {relatedDocuments.length === 0 && <p className="rounded-2xl bg-[var(--surface-soft)] px-3 py-3 text-sm leading-6 text-[var(--text-faint)]">暂无明确来源文件，问答可信度会降低。</p>}

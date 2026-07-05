@@ -3,9 +3,12 @@ import GraphSidebar from "../components/graph/GraphSidebar";
 import KnowledgeGraph from "../components/graph/KnowledgeGraph";
 import NodeDetailPanel from "../components/graph/NodeDetailPanel";
 import WorkspaceBadge from "../components/common/WorkspaceBadge";
+import { analyzeDocument } from "../services/aiService";
 import { getVisibleGraph, type GraphMode } from "../services/graphService";
 import { useAuthStore } from "../store/authStore";
+import { useAiStatus } from "../store/aiStatusStore";
 import { useKnowledgeStore } from "../store/knowledgeStore";
+import type { KnowledgeDocument, ParsedDocument } from "../types/document";
 import type { GraphNode, GraphNodeType, SourceReference } from "../types/graph";
 import { getConnectedEdges, getNeighborIds, getNodeById, searchGraphNodes } from "../utils/graphUtils";
 
@@ -16,7 +19,8 @@ interface GraphProps {
 }
 
 export default function Graph({ onOpenAssistant }: GraphProps) {
-  const { state, deleteNode, deleteDocument, clearGraph, setCopilotContext, canEditCurrentWorkspace, currentWorkspace } = useKnowledgeStore();
+  const { state, deleteNode, deleteDocument, clearGraph, setCopilotContext, replaceDocumentAnalysis, canEditCurrentWorkspace, currentWorkspace } = useKnowledgeStore();
+  const { markAiSuccess, markAiFailure } = useAiStatus();
   const { publishWorkspace } = useAuthStore();
   const [activeTypes, setActiveTypes] = useState<GraphNodeType[]>(allTypes);
   const [mode, setMode] = useState<GraphMode>("global");
@@ -154,6 +158,64 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
     window.setTimeout(() => setGeneratedToast(null), 2600);
   }
 
+  function parsedFromDocument(document: KnowledgeDocument, text: string): ParsedDocument {
+    return {
+      text,
+      kind: document.kind,
+      chunks: document.chunks,
+      diagnostics: {
+        status: document.parseStatus,
+        qualityLevel: document.canAnswer ? "usable" : "failed",
+        message: document.parseMessage,
+        extractedLength: document.extractedLength,
+        readabilityScore: document.canAnswer ? 100 : 0,
+        chineseRatio: 0,
+        abnormalCharRatio: document.isGarbled ? 1 : 0,
+        newlineAnomalyScore: 0,
+        isGarbled: document.isGarbled,
+        needsOcr: document.needsOcr,
+        ocrAvailable: false,
+        ocrStatus: document.needsOcr ? "not_configured" : "not_needed",
+        chunkCount: document.chunks.length,
+        canAnswer: document.canAnswer,
+        allowContinue: document.canAnswer,
+        requiresUserConfirmation: false,
+        preview: text.slice(0, 1000),
+        nextSuggestion: document.canAnswer ? "可以使用真实 AI 重新生成节点和关系。" : "需要先补充可解析正文后再重新分析。",
+      },
+    };
+  }
+
+  async function handleReanalyzeDocument(documentId: string) {
+    if (!canEditCurrentWorkspace) {
+      window.alert("你当前没有编辑权限，不能重新分析该资料。");
+      return;
+    }
+    const document = state.documents.find((item) => item.id === documentId);
+    if (!document) return;
+    const text = (document.sourceText || document.chunks.map((chunk) => chunk.text).join("\n\n")).trim();
+    if (!text) {
+      window.alert("该资料没有可用于重新分析的正文，请重新上传或手动导入正文。");
+      return;
+    }
+    setGeneratedToast(`正在重新分析《${document.title}》...`);
+    try {
+      const parsed = parsedFromDocument(document, text);
+      const analysis = await analyzeDocument(text, document.title, parsed);
+      replaceDocumentAnalysis(document.id, text, analysis, parsed);
+      markAiSuccess("reanalyze-document");
+      setSelectedNode(null);
+      setGeneratedToast(`已用真实 AI 重新分析《${document.title}》。`);
+    } catch (error) {
+      markAiFailure("reanalyze-document", error);
+      const message = error instanceof Error ? error.message : "重新分析失败，请检查后端 AI 接口。";
+      setGeneratedToast(message);
+      window.alert(message);
+    } finally {
+      window.setTimeout(() => setGeneratedToast(null), 3000);
+    }
+  }
+
   function openCopilot(intent: "ask" | "summary" | "generate" | "analyze" | "web") {
     if (!selectedNode) return;
     setCopilotContext({
@@ -240,6 +302,7 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
           }}
           onClearGraph={handleClearGraph}
           onDeleteDocument={handleDeleteDocument}
+          onReanalyzeDocument={(documentId) => void handleReanalyzeDocument(documentId)}
         />
         <KnowledgeGraph
           data={visibleGraph}
@@ -271,6 +334,7 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
           }}
           onAskNode={openCopilot}
           onDeleteNode={handleDeleteNode}
+          onReanalyzeDocument={(documentId) => void handleReanalyzeDocument(documentId)}
         />
       </div>
       {generatedToast && (

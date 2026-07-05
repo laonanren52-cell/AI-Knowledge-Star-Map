@@ -64,6 +64,7 @@ export interface KnowledgeState {
 type KnowledgeAction =
   | { type: "hydrateWorkspace"; workspaceId: string; data: WorkspaceDataset }
   | { type: "ingestAnalysis"; workspaceId: string; file: File; content: string; analysis: AnalysisResult; parsed?: ParsedDocument }
+  | { type: "replaceDocumentAnalysis"; workspaceId: string; documentId: string; content: string; analysis: AnalysisResult; parsed?: ParsedDocument }
   | { type: "deleteNode"; workspaceId: string; nodeId: string }
   | { type: "deleteDocument"; workspaceId: string; documentId: string }
   | { type: "clearGraph"; workspaceId: string }
@@ -78,6 +79,7 @@ interface KnowledgeContextValue {
   currentAccess: WorkspaceAccess | null;
   canEditCurrentWorkspace: boolean;
   ingestAnalysis: (file: File, content: string, analysis: AnalysisResult, parsed?: ParsedDocument) => void;
+  replaceDocumentAnalysis: (documentId: string, content: string, analysis: AnalysisResult, parsed?: ParsedDocument) => void;
   deleteNode: (nodeId: string) => void;
   deleteDocument: (documentId: string) => void;
   clearGraph: () => void;
@@ -277,6 +279,9 @@ function normalizeDocument(document: KnowledgeDocument): KnowledgeDocument {
     needsOcr: document.needsOcr ?? diagnostics.needsOcr,
     canAnswer: document.canAnswer ?? diagnostics.canAnswer,
     chunks,
+    analysisProvider: document.analysisProvider ?? "legacy",
+    analysisSourceStatus: document.analysisSourceStatus ?? "local_rule",
+    analyzedAt: document.analyzedAt,
   };
 }
 
@@ -284,6 +289,9 @@ function makeDocumentFromAnalysis(file: File, content: string, analysis: Analysi
   const stamp = Date.now();
   const id = `user-doc-${stamp}-${slug(file.name) || "upload"}`;
   const diagnostics = parsed?.diagnostics ?? analysis.parsing ?? fallbackDiagnostics(content);
+  const sourceStatus = analysisSourceStatus(analysis);
+  const provider = analysisProvider(analysis);
+  const analyzedAt = analysisTimestamp(analysis);
   const chunks = (parsed?.chunks ?? buildFallbackChunks(id, content, workspaceId)).map((chunk) => ({
     ...chunk,
     id: chunk.id || `${id}-chunk-${chunk.index + 1}`,
@@ -308,6 +316,35 @@ function makeDocumentFromAnalysis(file: File, content: string, analysis: Analysi
     needsOcr: diagnostics.needsOcr,
     canAnswer: diagnostics.canAnswer,
     chunks,
+    analysisProvider: provider,
+    analysisSourceStatus: sourceStatus,
+    analyzedAt,
+  };
+}
+
+function updateDocumentFromAnalysis(document: KnowledgeDocument, content: string, analysis: AnalysisResult, parsed?: ParsedDocument): KnowledgeDocument {
+  const diagnostics = parsed?.diagnostics ?? analysis.parsing ?? fallbackDiagnostics(content || document.sourceText || document.summary);
+  const sourceStatus = analysisSourceStatus(analysis);
+  const provider = analysisProvider(analysis);
+  const analyzedAt = analysisTimestamp(analysis);
+  const chunks = (parsed?.chunks?.length ? parsed.chunks : document.chunks).map((chunk) => ({ ...chunk, workspaceId: document.workspaceId }));
+  const confidence = confidenceForDiagnostics(analysis.confidence, diagnostics);
+  return {
+    ...document,
+    summary: analysis.summary,
+    keywords: analysis.keywords,
+    sourceText: diagnostics.canAnswer ? (content || document.sourceText).slice(0, 12_000) : document.sourceText,
+    confidence,
+    parseStatus: diagnostics.status,
+    parseMessage: diagnostics.message,
+    extractedLength: diagnostics.extractedLength,
+    isGarbled: diagnostics.isGarbled,
+    needsOcr: diagnostics.needsOcr,
+    canAnswer: diagnostics.canAnswer,
+    chunks,
+    analysisProvider: provider,
+    analysisSourceStatus: sourceStatus,
+    analyzedAt,
   };
 }
 
@@ -318,9 +355,24 @@ function confidenceForDiagnostics(baseConfidence: number, diagnostics: ParseDiag
   return baseConfidence;
 }
 
+function analysisSourceStatus(analysis: AnalysisResult): "api" | "mock" | "local_rule" {
+  return analysis.sourceStatus ?? (analysis.provider === "mock" ? "mock" : analysis.provider === "local_rule" ? "local_rule" : "api");
+}
+
+function analysisProvider(analysis: AnalysisResult) {
+  return analysis.provider ?? analysisSourceStatus(analysis);
+}
+
+function analysisTimestamp(analysis: AnalysisResult) {
+  return analysis.analyzedAt ?? nowIso();
+}
+
 function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisResult, workspaceId: string) {
   const group = `upload-${slug(document.title) || Date.now()}`;
   const docNodeId = `node-${document.id}`;
+  const sourceStatus = analysisSourceStatus(analysis);
+  const provider = analysisProvider(analysis);
+  const analyzedAt = analysisTimestamp(analysis);
   const documentNode: GraphNode = {
     id: docNodeId,
     workspaceId,
@@ -332,6 +384,9 @@ function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisRe
     sourceDocumentIds: [document.id],
     value: document.canAnswer ? 22 : 12,
     confidence: document.confidence,
+    analysisProvider: provider,
+    analysisSourceStatus: sourceStatus,
+    analyzedAt,
   };
 
   const importedNodes = analysis.entities.map((node, index) => ({
@@ -343,6 +398,9 @@ function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisRe
     sourceDocumentIds: [...new Set([...(node.sourceDocumentIds ?? []), document.id])],
     description: node.description || `${node.label} 来自 ${document.title} 的 AI 解析结果。`,
     confidence: Math.min(node.confidence ?? analysis.confidence, document.confidence),
+    analysisProvider: node.analysisProvider ?? provider,
+    analysisSourceStatus: node.analysisSourceStatus ?? sourceStatus,
+    analyzedAt: node.analyzedAt ?? analyzedAt,
   }));
   const nodes = uniqueById([documentNode, ...importedNodes]);
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -354,6 +412,9 @@ function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisRe
       workspaceId,
       confidence: Math.min(edge.confidence ?? analysis.confidence, document.confidence),
       evidence: edge.evidence || analysis.summary,
+      analysisProvider: edge.analysisProvider ?? provider,
+      analysisSourceStatus: edge.analysisSourceStatus ?? sourceStatus,
+      analyzedAt: edge.analyzedAt ?? analyzedAt,
     }));
   const docEdges = importedNodes.slice(0, 18).map<GraphEdge>((node, index) => ({
     id: `edge-${docNodeId}-${node.id}`.replace(/[^a-zA-Z0-9-]/g, "-"),
@@ -365,6 +426,9 @@ function sanitizeImportedGraph(document: KnowledgeDocument, analysis: AnalysisRe
     weight: index === 0 ? 0.95 : 0.62,
     confidence: document.confidence,
     evidence: document.canAnswer ? (document.chunks[index % Math.max(1, document.chunks.length)]?.text ?? analysis.summary) : document.parseMessage,
+    analysisProvider: provider,
+    analysisSourceStatus: sourceStatus,
+    analyzedAt,
   }));
   return { nodes, edges: uniqueById([...relations, ...docEdges]), highlightedNodeIds: nodes.map((node) => node.id) };
 }
@@ -509,6 +573,39 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
         detail: document.canAnswer
           ? `正文长度 ${document.extractedLength}，可问答片段 ${document.chunks.length}，新增 ${imported.nodes.length} 个节点。`
           : document.parseMessage,
+        documentId: document.id,
+        nodeIds: imported.highlightedNodeIds,
+      }, workspaceId),
+    };
+    return withRecommendations(nextState);
+  }
+
+  if (action.type === "replaceDocumentAnalysis") {
+    const workspaceId = workspaceIdOrDefault(action.workspaceId);
+    const existing = state.documents.find((item) => item.id === action.documentId && documentWorkspaceId(item) === workspaceId);
+    if (!existing) return state;
+    const document = updateDocumentFromAnalysis(existing, action.content, action.analysis, action.parsed);
+    const imported = sanitizeImportedGraph(document, action.analysis, workspaceId);
+    const nodesById = new Map(state.graph.nodes.map((node) => [node.id, node]));
+    const keptNodes = state.graph.nodes.filter((node) => {
+      if (nodeWorkspaceId(node) !== workspaceId) return true;
+      if (node.type === "output") return true;
+      return !node.sourceDocumentIds?.includes(action.documentId);
+    });
+    const keptNodeIds = new Set(keptNodes.map((node) => node.id));
+    const keptEdges = state.graph.edges.filter((edge) => {
+      if (edgeWorkspaceId(edge, nodesById) !== workspaceId) return true;
+      return keptNodeIds.has(edge.from) && keptNodeIds.has(edge.to);
+    });
+    const nextState: KnowledgeState = {
+      ...state,
+      documents: [document, ...state.documents.filter((item) => item.id !== action.documentId)],
+      graph: mergeGraphs({ nodes: keptNodes, edges: keptEdges }, imported),
+      highlightedNodeIds: imported.highlightedNodeIds,
+      recentActivities: addActivity(state, {
+        type: "upload",
+        title: `已重新分析资料：${document.title}`,
+        detail: `模型 ${document.analysisProvider ?? "api"}，新增 ${imported.nodes.length} 个节点、${imported.edges.length} 条关系。`,
         documentId: document.id,
         nodeIds: imported.highlightedNodeIds,
       }, workspaceId),
@@ -760,6 +857,11 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         if (!guardWrite()) return;
         dispatch({ type: "ingestAnalysis", workspaceId, file, content, analysis, parsed });
         void recordRemoteActivity({ workspaceId, actionType: "upload", targetType: "document", targetId: file.name, detail: `上传并分析资料：${file.name}` });
+      },
+      replaceDocumentAnalysis: (documentId, content, analysis, parsed) => {
+        if (!guardWrite()) return;
+        dispatch({ type: "replaceDocumentAnalysis", workspaceId, documentId, content, analysis, parsed });
+        void recordRemoteActivity({ workspaceId, actionType: "upload", targetType: "document", targetId: documentId, detail: "重新分析资料并替换星图节点关系" });
       },
       deleteNode: (nodeId) => {
         if (!guardWrite()) return;

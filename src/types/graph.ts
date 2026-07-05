@@ -31,6 +31,9 @@ export interface GraphNode {
   cluster?: string;
   x?: number;
   y?: number;
+  analysisProvider?: string;
+  analysisSourceStatus?: "api" | "mock" | "local_rule";
+  analyzedAt?: string;
 }
 
 export interface GraphEdge {
@@ -43,6 +46,9 @@ export interface GraphEdge {
   weight?: number;
   confidence?: number;
   evidence?: string;
+  analysisProvider?: string;
+  analysisSourceStatus?: "api" | "mock" | "local_rule";
+  analyzedAt?: string;
 }
 
 export interface SourceReference {
@@ -72,6 +78,9 @@ export interface AnalysisResult {
   sources: SourceReference[];
   confidence: number;
   parsing?: ParseDiagnostics;
+  provider?: string;
+  sourceStatus?: "api" | "mock" | "local_rule";
+  analyzedAt?: string;
 }
 
 export interface GraphData {

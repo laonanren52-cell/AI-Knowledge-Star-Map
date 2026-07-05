@@ -248,7 +248,7 @@ export default function AdminSettings() {
                 ["存储模式", displaySettings.storageMode === "local" ? "本地统一 store" : "API 数据源"],
                 ["版本", displaySettings.version],
                 ["AI 模型", aiStatus.providerLabel],
-                ["联网搜索", aiStatus.searchEnabled ? `已配置 ${aiStatus.searchProvider}` : "未配置"],
+                ["联网搜索", aiStatus.searchConfigured ? `已配置 ${aiStatus.searchProvider}` : "未配置"],
                 ["OCR", aiStatus.ocrEnabled ? "已开启" : "未配置"],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-4 py-3">

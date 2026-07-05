@@ -1,4 +1,4 @@
-import { CheckSquare, ChevronDown, FileText, Filter, LocateFixed, RotateCcw, Search, SlidersHorizontal, Square, Trash2 } from "lucide-react";
+import { CheckSquare, ChevronDown, FileText, Filter, LocateFixed, RefreshCw, RotateCcw, Search, SlidersHorizontal, Square, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { nodeTypeMeta } from "../../data/mockGraphData";
 import type { GraphMode } from "../../services/graphService";
@@ -40,6 +40,7 @@ interface GraphSidebarProps {
   onReset: () => void;
   onClearGraph: () => void;
   onDeleteDocument: (documentId: string) => void;
+  onReanalyzeDocument: (documentId: string) => void;
 }
 
 export default function GraphSidebar({
@@ -63,6 +64,7 @@ export default function GraphSidebar({
   onReset,
   onClearGraph,
   onDeleteDocument,
+  onReanalyzeDocument,
 }: GraphSidebarProps) {
   return (
     <aside className="knowledge-graph-frame graph-side-panel lux-card workbench-panel min-w-0 flex-col rounded-3xl p-4">
@@ -208,16 +210,27 @@ export default function GraphSidebar({
                       <p className="truncate text-sm font-medium text-[var(--text-primary)]">{document.title}</p>
                       <p className="mt-1 text-xs text-[var(--text-faint)]">{document.uploadedAt} · {document.sizeLabel}</p>
                       <p className="mt-1 text-xs text-[var(--text-faint)]">{document.canAnswer ? `${document.chunks.length} 个片段` : document.parseStatus}</p>
+                      {document.analysisSourceStatus === "mock" && <p className="mt-1 text-xs text-[var(--warning)]">历史 mock 数据</p>}
                     </div>
                     {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => onDeleteDocument(document.id)}
-                        className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger)] opacity-75 transition hover:opacity-100"
-                        title="删除该资料及关联节点"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => onReanalyzeDocument(document.id)}
+                          className="grid h-8 w-8 place-items-center rounded-xl border border-[var(--accent-border)] bg-[var(--accent-soft)] text-[var(--accent)] opacity-75 transition hover:opacity-100"
+                          title="重新分析当前资料"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteDocument(document.id)}
+                          className="grid h-8 w-8 place-items-center rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger)] opacity-75 transition hover:opacity-100"
+                          title="删除该资料及关联节点"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>

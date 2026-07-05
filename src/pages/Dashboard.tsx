@@ -134,7 +134,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               <PreviewCard icon={CheckCircle2} label="AI 分析状态" value={aiStatus.summary} detail={`${chunkCount} 个来源片段，${answerableDocuments.length} 份资料可问答`} />
               <PreviewCard icon={FileText} label="最近上传文件" value={latestDocument?.title ?? "暂无资料"} detail={latestDocument?.parseMessage ?? "导入后自动检测正文质量"} />
               <PreviewCard icon={Search} label="访问 / 登录" value={`${metrics.totalVisits} / ${metrics.loginCount}`} detail={`当前用户：${currentUser?.username ?? "未登录"}`} />
-              <PreviewCard icon={Globe2} label="联网 / OCR" value={aiStatus.searchEnabled ? `搜索 ${aiStatus.searchProvider}` : "搜索未配置"} detail={aiStatus.ocrEnabled ? "OCR 已开启" : "OCR 未配置，仅影响扫描件识别"} />
+              <PreviewCard icon={Globe2} label="联网 / OCR" value={aiStatus.searchConfigured ? `搜索 ${aiStatus.searchProvider}` : "搜索未配置"} detail={aiStatus.ocrEnabled ? "OCR 已开启" : "OCR 未配置，仅影响扫描件识别"} />
             </div>
           </div>
         </div>

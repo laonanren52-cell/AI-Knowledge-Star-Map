@@ -4,7 +4,7 @@ import AnalysisResultCard from "../components/upload/AnalysisResultCard";
 import UploadDropzone from "../components/upload/UploadDropzone";
 import AiModeBadge from "../components/common/AiModeBadge";
 import WorkspaceBadge from "../components/common/WorkspaceBadge";
-import { analyzeDocument, analyzeDocumentMock, buildUnavailableAnalysis } from "../services/aiService";
+import { analyzeDocument, buildUnavailableAnalysis } from "../services/aiService";
 import { parseUploadedFile, validateUpload } from "../services/documentService";
 import { useAiStatus } from "../store/aiStatusStore";
 import { useKnowledgeStore } from "../store/knowledgeStore";
@@ -145,7 +145,7 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
     }
   }
 
-  async function runMockFallback() {
+  async function retryCurrentAnalysis() {
     if (!fallbackRequest) return;
     setError(null);
     setPendingReview(null);
@@ -155,13 +155,13 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
         setCurrentStep(step);
         await new Promise((resolve) => window.setTimeout(resolve, 160));
       }
-      const analysis = await analyzeDocumentMock(fallbackRequest.parsed.text, fallbackRequest.file.name, fallbackRequest.parsed);
-      markAiSuccess("mock-analyze");
+      const analysis = await analyzeDocument(fallbackRequest.parsed.text, fallbackRequest.file.name, fallbackRequest.parsed);
+      markAiSuccess("retry-analyze");
       ingestAndShowResult(fallbackRequest.file, fallbackRequest.parsed, { ...analysis, parsing: fallbackRequest.parsed.diagnostics });
       setFallbackRequest(null);
     } catch (err) {
-      markAiFailure("mock-analyze", err);
-      setError(err instanceof Error ? err.message : "mock 演示分析失败。");
+      markAiFailure("retry-analyze", err);
+      setError(err instanceof Error ? err.message : "重新分析失败，请检查后端 AI 接口。");
     } finally {
       setCurrentStep(null);
     }
@@ -290,16 +290,16 @@ export default function Upload({ onOpenGraph, onOpenAssistant }: UploadProps) {
             <h2 className="mt-3 text-3xl font-semibold text-[var(--text-primary)]">文件正文已解析，但 AI 分析请求失败</h2>
             <p className="mt-4 max-w-xl text-sm leading-7 text-[var(--text-muted)]">
               {aiStatus.connection === "connected"
-                ? "AI 代理处于可连接状态，但本次分析请求没有返回可用的结构化结果。可以稍后重试，或使用 Mock 分析继续演示星图链路。"
-                : "文件正文已经解析成功，但当前 AI 代理不可用或部分能力未配置。可以检查后端环境变量，或使用 Mock 分析继续演示星图链路。"}
+                ? "AI 代理处于可连接状态，但本次分析请求没有返回可用的结构化结果。可以稍后重新分析当前资料。"
+                : "文件正文已经解析成功，但当前 AI 代理不可用或部分能力未配置。请检查后端环境变量后重新分析当前资料。"}
             </p>
             {aiStatus.lastError && (
               <p className="mt-4 rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-bg)] px-4 py-3 text-sm text-[var(--warning)]">
                 最近一次错误：{aiStatus.lastError}
               </p>
             )}
-            <button type="button" onClick={() => void runMockFallback()} className="mt-7 btn-secondary w-fit border-[var(--warning-border)] text-[var(--warning)]">
-              使用 mock 演示继续
+            <button type="button" onClick={() => void retryCurrentAnalysis()} className="mt-7 btn-secondary w-fit border-[var(--warning-border)] text-[var(--warning)]">
+              重新分析当前资料
             </button>
           </div>
         ) : (

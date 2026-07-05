@@ -82,6 +82,9 @@ export interface KnowledgeDocument {
   needsOcr: boolean;
   canAnswer: boolean;
   chunks: TextChunk[];
+  analysisProvider?: string;
+  analysisSourceStatus?: "api" | "mock" | "local_rule";
+  analyzedAt?: string;
 }
 
 export interface UploadValidationResult {
