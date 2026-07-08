@@ -9,6 +9,7 @@ import {
   LogOut,
   MonitorDot,
   RefreshCw,
+  Save,
   Search,
   Settings,
   ShieldCheck,
@@ -19,13 +20,40 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { getAdminOverview, type AdminOverview } from "../services/backendDataService";
+import {
+  getAdminConfig,
+  getAdminOverview,
+  getUserPreferences,
+  updateAdminConfig,
+  updateUserPreferences,
+  type AdminOverview,
+  type SystemConfigSummary,
+} from "../services/backendDataService";
 import { useAiStatus } from "../store/aiStatusStore";
 import { useAuthStore } from "../store/authStore";
 import { useKnowledgeStore } from "../store/knowledgeStore";
+import type { UserPreferences } from "../types/workspace";
 import { formatShanghaiDateTime } from "../utils/time";
 
-type SettingsSection = "profile" | "security" | "space" | "ai" | "preferences" | "usage" | "members" | "system" | "audit";
+type SettingsSection = "profile" | "security" | "space" | "ai" | "preferences" | "usage" | "members" | "system" | "spaces" | "audit";
+
+const defaultPreferences: UserPreferences = {
+  defaultHome: "dashboard",
+  graphMode: "global",
+  animationsEnabled: true,
+  tipsEnabled: true,
+  density: "comfortable",
+  sidebarExpanded: false,
+  updatedAt: "",
+};
+
+function preferenceStorageKey(userId?: string) {
+  return `zhimai-user-preferences-${userId || "anonymous"}`;
+}
+
+function normalizePreferences(value?: Partial<UserPreferences> | null): UserPreferences {
+  return { ...defaultPreferences, ...(value ?? {}) };
+}
 
 export default function AdminSettings() {
   const {
@@ -55,6 +83,22 @@ export default function AdminSettings() {
   const [phone, setPhone] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [systemConfig, setSystemConfig] = useState<SystemConfigSummary | null>(null);
+  const [configDraft, setConfigDraft] = useState({
+    aiProvider: "mock",
+    aiModel: "mock",
+    aiEnabled: true,
+    allowMock: true,
+    aiApiKey: "",
+    searchEnabled: false,
+    searchProvider: "none",
+    searchApiKey: "",
+    ocrEnabled: false,
+    ocrProvider: "none",
+    ocrApiKey: "",
+  });
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [preferences, setPreferences] = useState<UserPreferences>(defaultPreferences);
 
   const canAccessAdminPanel = currentUser?.role === "admin" && currentUser.canAccessAdminPanel !== false;
 
@@ -74,10 +118,57 @@ export default function AdminSettings() {
       .catch(() => {
         // The local store remains as a fallback if the backend is temporarily unavailable.
       });
+    getAdminConfig()
+      .then(({ config }) => {
+        if (cancelled) return;
+        setSystemConfig(config);
+        setConfigDraft((draft) => ({
+          ...draft,
+          aiProvider: config.ai.provider || "mock",
+          aiModel: config.ai.model || "mock",
+          aiEnabled: config.ai.enabled,
+          allowMock: config.ai.allowMock,
+          searchEnabled: config.search.enabled,
+          searchProvider: config.search.provider || "none",
+          ocrEnabled: config.ocr.enabled,
+          ocrProvider: config.ocr.provider || "none",
+        }));
+      })
+      .catch((error) => {
+        if (!cancelled) setNotice(error instanceof Error ? error.message : "系统配置读取失败。");
+      });
     return () => {
       cancelled = true;
     };
   }, [canAccessAdminPanel, currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let cancelled = false;
+    const raw = window.localStorage.getItem(preferenceStorageKey(currentUser.id));
+    if (raw) {
+      try {
+        setPreferences(normalizePreferences(JSON.parse(raw) as Partial<UserPreferences>));
+      } catch {
+        setPreferences(defaultPreferences);
+      }
+    }
+    getUserPreferences()
+      .then(({ preferences: nextPreferences }) => {
+        if (!cancelled) setPreferences(normalizePreferences(nextPreferences));
+      })
+      .catch(() => {
+        // Local preference cache keeps the settings usable if the API is unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("zhimai-motion-off", !preferences.animationsEnabled);
+    document.documentElement.classList.toggle("zhimai-density-compact", preferences.density === "compact");
+  }, [preferences.animationsEnabled, preferences.density]);
 
   const displayUsers = canAccessAdminPanel ? overview?.users ?? users : currentUser ? [currentUser] : [];
   const displayMetrics = overview?.metrics ?? metrics;
@@ -98,11 +189,12 @@ export default function AdminSettings() {
     { key: "profile", label: "个人资料", detail: "用户名、昵称、邮箱", icon: <UserCog className="h-4 w-4" /> },
     { key: "security", label: "账号安全", detail: "密码、登录、退出", icon: <KeyRound className="h-4 w-4" /> },
     { key: "space", label: "空间与权限", detail: "空间、身份、访问范围", icon: <ShieldCheck className="h-4 w-4" /> },
-    { key: "ai", label: "AI 与系统", detail: "模型、搜索、OCR", icon: <Settings className="h-4 w-4" /> },
+    { key: "ai", label: "AI 与系统", detail: canAccessAdminPanel ? "模型、搜索、OCR 配置" : "AI 状态只读", icon: <Settings className="h-4 w-4" /> },
     { key: "preferences", label: "偏好设置", detail: "首页、图谱、动画", icon: <SlidersHorizontal className="h-4 w-4" /> },
     { key: "usage", label: "数据与使用", detail: "资料、节点、成果", icon: <Database className="h-4 w-4" /> },
     { key: "members", label: "成员管理", detail: "用户状态与密码", icon: <UsersRound className="h-4 w-4" />, adminOnly: true },
     { key: "system", label: "系统状态", detail: "访问、在线、API", icon: <MonitorDot className="h-4 w-4" />, adminOnly: true },
+    { key: "spaces", label: "空间管理", detail: "空间列表与权限", icon: <Globe2 className="h-4 w-4" />, adminOnly: true },
     { key: "audit", label: "日志审计", detail: "登录与关键操作", icon: <Activity className="h-4 w-4" />, adminOnly: true },
   ];
   const sections = allSections.filter((section) => !section.adminOnly || canAccessAdminPanel);
@@ -130,6 +222,57 @@ export default function AdminSettings() {
     const temporaryPassword = `Zm-${Math.random().toString(36).slice(2, 8)}-${new Date().getFullYear()}`;
     changePassword(userId, temporaryPassword);
     setNotice(`已生成临时密码：${temporaryPassword}。请通过安全渠道发送给该用户。`);
+  }
+
+  async function saveSystemConfig() {
+    if (!canAccessAdminPanel) return;
+    setSavingConfig(true);
+    setNotice(null);
+    try {
+      const { config } = await updateAdminConfig({
+        ai: {
+          provider: configDraft.aiProvider,
+          model: configDraft.aiModel,
+          enabled: configDraft.aiEnabled,
+          allowMock: configDraft.allowMock,
+          ...(configDraft.aiApiKey.trim() ? { apiKey: configDraft.aiApiKey.trim() } : {}),
+        },
+        search: {
+          enabled: configDraft.searchEnabled,
+          provider: configDraft.searchProvider,
+          ...(configDraft.searchApiKey.trim() ? { apiKey: configDraft.searchApiKey.trim() } : {}),
+        },
+        ocr: {
+          enabled: configDraft.ocrEnabled,
+          provider: configDraft.ocrProvider,
+          ...(configDraft.ocrApiKey.trim() ? { apiKey: configDraft.ocrApiKey.trim() } : {}),
+        },
+      });
+      setSystemConfig(config);
+      setConfigDraft((draft) => ({ ...draft, aiApiKey: "", searchApiKey: "", ocrApiKey: "" }));
+      await refreshHealth();
+      setNotice("系统配置已保存，健康状态已刷新。普通 Provider、模型、搜索和 OCR 配置无需重启后端。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "系统配置保存失败。");
+    } finally {
+      setSavingConfig(false);
+    }
+  }
+
+  function updatePreference(nextPatch: Partial<UserPreferences>) {
+    if (!currentUser?.id) return;
+    const next = normalizePreferences({ ...preferences, ...nextPatch, updatedAt: new Date().toISOString() });
+    setPreferences(next);
+    window.localStorage.setItem(preferenceStorageKey(currentUser.id), JSON.stringify(next));
+    updateUserPreferences(next)
+      .then(({ preferences: saved }) => {
+        const normalized = normalizePreferences(saved);
+        setPreferences(normalized);
+        window.localStorage.setItem(preferenceStorageKey(currentUser.id), JSON.stringify(normalized));
+      })
+      .catch((error) => {
+        setNotice(error instanceof Error ? `偏好已在本地更新，后端保存失败：${error.message}` : "偏好已在本地更新，后端保存失败。");
+      });
   }
 
   return (
@@ -208,7 +351,7 @@ export default function AdminSettings() {
           )}
 
           {activeSection === "space" && (
-            <SettingsCard title="空间与权限" description="这些信息已从业务页收纳到设置中心。">
+            <SettingsCard title="空间与权限" description="这些信息已从业务页收纳到设置中心。普通用户只能查看自己的访问状态。">
               <div className="grid gap-3 md:grid-cols-2">
                 <InfoRow label="当前空间" value={currentWorkspace?.name ?? "暂无记录"} />
                 <InfoRow label="空间类型" value={formatWorkspaceType(currentWorkspace?.type)} />
@@ -222,30 +365,77 @@ export default function AdminSettings() {
 
           {activeSection === "ai" && (
             <SettingsCard
-              title="AI 与系统"
-              description="只展示运行状态，不暴露任何 API Key。"
+              title={canAccessAdminPanel ? "AI 与系统配置" : "AI 状态"}
+              description={canAccessAdminPanel ? "管理员可以直接保存常用 AI、联网搜索和 OCR 配置。API Key 仅提交到后端，不会在页面明文展示。" : "当前账号只能查看 AI、搜索与 OCR 运行状态。"}
               action={<button type="button" onClick={() => void refreshHealth()} className="btn-secondary px-3 py-2"><RefreshCw className="h-4 w-4" />刷新</button>}
             >
               <div className="grid gap-3 md:grid-cols-2">
-                <InfoRow label="AI Provider" value={aiStatus.provider || "暂无记录"} />
-                <InfoRow label="当前模型" value={aiStatus.model || "暂无记录"} />
-                <InfoRow label="联网增强" value={aiStatus.searchConfigured ? `${formatProvider(aiStatus.searchProvider)} 已配置` : "未配置"} />
-                <InfoRow label="OCR 状态" value={aiStatus.ocrConfigured || aiStatus.ocrEnabled ? "已配置" : "未配置"} />
+                <InfoRow label="AI Provider" value={aiStatus.provider || systemConfig?.ai.provider || "暂无记录"} />
+                <InfoRow label="当前模型" value={aiStatus.model || systemConfig?.ai.model || "暂无记录"} />
+                <InfoRow label="联网搜索状态" value={aiStatus.searchConfigured ? `${formatProvider(aiStatus.searchProvider)} 已配置` : "未配置"} />
+                <InfoRow label="OCR 状态" value={aiStatus.ocrConfigured || aiStatus.ocrEnabled ? `${formatProvider(systemConfig?.ocr.provider)} 已配置` : "未配置"} />
                 <InfoRow label="Mock 状态" value={aiStatus.isMockMode ? "Mock 演示模式" : "真实 AI 模式"} />
                 <InfoRow label="健康检查" value={aiStatus.summary} />
               </div>
+
+              {canAccessAdminPanel && (
+                <div className="mt-5 grid gap-5">
+                  <div className="grid gap-3 rounded-3xl border border-[var(--border-subtle)] bg-[var(--surface-soft)] p-4">
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">AI 配置</h3>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <SelectField label="AI Provider" value={configDraft.aiProvider} onChange={(value) => setConfigDraft((draft) => ({ ...draft, aiProvider: value }))} options={[["deepseek", "DeepSeek"], ["openai", "OpenAI"], ["mock", "Mock"]]} />
+                      <TextField label="当前模型" value={configDraft.aiModel} onChange={(value) => setConfigDraft((draft) => ({ ...draft, aiModel: value }))} placeholder="deepseek-v4-flash" />
+                      <SwitchRow label="启用真实 AI" checked={configDraft.aiEnabled} onChange={(value) => setConfigDraft((draft) => ({ ...draft, aiEnabled: value }))} />
+                      <SwitchRow label="允许 Mock 演示模式" checked={configDraft.allowMock} onChange={(value) => setConfigDraft((draft) => ({ ...draft, allowMock: value }))} />
+                      <InfoRow label="AI Key 状态" value={systemConfig?.ai.apiKeyConfigured ? `已配置 ${systemConfig.ai.apiKeyMasked || ""}` : "未配置"} />
+                      <TextField label="重新填写 AI Key" value={configDraft.aiApiKey} onChange={(value) => setConfigDraft((draft) => ({ ...draft, aiApiKey: value }))} placeholder="不展示旧 Key，留空则保持不变" type="password" />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 rounded-3xl border border-[var(--border-subtle)] bg-[var(--surface-soft)] p-4">
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">搜索配置</h3>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <SwitchRow label="启用联网搜索" checked={configDraft.searchEnabled} onChange={(value) => setConfigDraft((draft) => ({ ...draft, searchEnabled: value }))} />
+                      <SelectField label="搜索 Provider" value={configDraft.searchProvider} onChange={(value) => setConfigDraft((draft) => ({ ...draft, searchProvider: value }))} options={[["tavily", "Tavily"], ["brave", "Brave"], ["serpapi", "SerpAPI"], ["none", "不启用"]]} />
+                      <InfoRow label="搜索 Key 状态" value={systemConfig?.search.apiKeyConfigured ? `已配置 ${systemConfig.search.apiKeyMasked || ""}` : "未配置"} />
+                      <TextField label="重新填写搜索 Key" value={configDraft.searchApiKey} onChange={(value) => setConfigDraft((draft) => ({ ...draft, searchApiKey: value }))} placeholder="Tavily / Brave / SerpAPI Key" type="password" />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 rounded-3xl border border-[var(--border-subtle)] bg-[var(--surface-soft)] p-4">
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">OCR 配置</h3>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <SwitchRow label="启用 OCR" checked={configDraft.ocrEnabled} onChange={(value) => setConfigDraft((draft) => ({ ...draft, ocrEnabled: value }))} />
+                      <TextField label="OCR Provider" value={configDraft.ocrProvider} onChange={(value) => setConfigDraft((draft) => ({ ...draft, ocrProvider: value }))} placeholder="none / aliyun / tencent" />
+                      <InfoRow label="OCR Key 状态" value={systemConfig?.ocr.apiKeyConfigured ? `已配置 ${systemConfig.ocr.apiKeyMasked || ""}` : "未配置"} />
+                      <TextField label="重新填写 OCR Key" value={configDraft.ocrApiKey} onChange={(value) => setConfigDraft((draft) => ({ ...draft, ocrApiKey: value }))} placeholder="不展示旧 Key，留空则保持不变" type="password" />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 rounded-3xl border border-[var(--warning-border)] bg-[var(--warning-bg)] p-4 text-sm leading-6 text-[var(--warning)] md:flex-row md:items-center md:justify-between">
+                    <span>普通 Provider、模型、搜索和 OCR 配置保存后立即生效；底层接口地址、端口、CORS、数据库路径等部署级配置仍建议保留在 .env，修改后可能需要重启后端。</span>
+                    <button type="button" onClick={saveSystemConfig} disabled={savingConfig} className="btn-primary justify-center px-4 py-2">
+                      <Save className="h-4 w-4" />
+                      {savingConfig ? "保存中" : "保存配置"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </SettingsCard>
           )}
 
           {activeSection === "preferences" && (
-            <SettingsCard title="偏好设置" description="当前为前端偏好入口，后续可接入持久化。">
-              <div className="grid gap-3 md:grid-cols-2">
-                <ToggleRow label="默认首页" value="工作区" />
-                <ToggleRow label="默认图谱模式" value="全局星图" />
-                <ToggleRow label="动画光效" value="显示" />
-                <ToggleRow label="小提示" value="显示" />
-                <ToggleRow label="界面密度" value="舒展模式" />
-                <ToggleRow label="默认展开侧栏" value="关闭" />
+            <SettingsCard title="偏好设置" description="这些设置属于当前账号，保存后刷新页面仍会保留。">
+              <div className="grid gap-4">
+                <PreferenceGroup label="默认首页" value={preferences.defaultHome} options={[["dashboard", "工作区"], ["upload", "知识导入"], ["graph", "知脉图"], ["assistant", "Copilot"], ["outputs", "成果工坊"]]} onChange={(value) => updatePreference({ defaultHome: value as UserPreferences["defaultHome"] })} />
+                <PreferenceGroup label="默认图谱模式" value={preferences.graphMode} options={[["global", "全局星图"], ["document", "资料聚焦"], ["recent", "最近更新"]]} onChange={(value) => updatePreference({ graphMode: value as UserPreferences["graphMode"] })} />
+                <PreferenceGroup label="界面密度" value={preferences.density} options={[["compact", "紧凑模式"], ["comfortable", "舒展模式"]]} onChange={(value) => updatePreference({ density: value as UserPreferences["density"] })} />
+                <div className="grid gap-3 md:grid-cols-3">
+                  <SwitchRow label="动画光效" checked={preferences.animationsEnabled} onChange={(value) => updatePreference({ animationsEnabled: value })} />
+                  <SwitchRow label="小提示" checked={preferences.tipsEnabled} onChange={(value) => updatePreference({ tipsEnabled: value })} />
+                  <SwitchRow label="默认展开侧栏" checked={preferences.sidebarExpanded} onChange={(value) => updatePreference({ sidebarExpanded: value })} />
+                </div>
+                <InfoRow label="最近保存" value={formatShanghaiDateTime(preferences.updatedAt)} />
               </div>
             </SettingsCard>
           )}
@@ -317,6 +507,24 @@ export default function AdminSettings() {
             </SettingsCard>
           )}
 
+          {activeSection === "spaces" && canAccessAdminPanel && (
+            <SettingsCard title="空间管理" description="管理员可查看空间列表与访问类型。">
+              <div className="grid gap-3">
+                {workspaces.map((workspace) => (
+                  <article key={workspace.id} className="micro-card p-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-[var(--text-primary)]">{workspace.name}</h3>
+                        <p className="mt-1 text-xs text-[var(--text-faint)]">{formatWorkspaceType(workspace.type)} · {workspace.visibility} · v{workspace.version}</p>
+                      </div>
+                      <span className="text-xs text-[var(--text-faint)]">{formatShanghaiDateTime(workspace.updatedAt)}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </SettingsCard>
+          )}
+
           {activeSection === "audit" && canAccessAdminPanel && (
             <SettingsCard title="日志审计" description="最近登录、导入、修改和关键操作。">
               <div className="thin-scrollbar max-h-[620px] space-y-2 overflow-y-auto pr-1">
@@ -367,11 +575,61 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function ToggleRow({ label, value }: { label: string; value: string }) {
+function SelectField({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-4 py-3">
+    <label className="grid gap-2">
       <span className="text-sm text-[var(--text-muted)]">{label}</span>
-      <span className="rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-3 py-1 text-xs text-[var(--accent)]">{value}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="input-shell rounded-2xl px-4 py-3 text-sm">
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function TextField({ label, value, onChange, placeholder, type = "text" }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string }) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-sm text-[var(--text-muted)]">{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} type={type} className="input-shell rounded-2xl px-4 py-3 text-sm" placeholder={placeholder} />
+    </label>
+  );
+}
+
+function SwitchRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-4 py-3 text-left transition hover:border-[var(--accent-border)]"
+    >
+      <span className="text-sm text-[var(--text-muted)]">{label}</span>
+      <span className={`rounded-full border px-3 py-1 text-xs ${checked ? "border-[var(--accent-border)] bg-[var(--accent-soft)] text-[var(--accent)]" : "border-[var(--border-subtle)] bg-[var(--surface-deep)] text-[var(--text-faint)]"}`}>
+        {checked ? "开启" : "关闭"}
+      </span>
+    </button>
+  );
+}
+
+function PreferenceGroup({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {
+  return (
+    <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-soft)] p-3">
+      <div className="mb-3 text-sm text-[var(--text-muted)]">{label}</div>
+      <div className="flex flex-wrap gap-2">
+        {options.map(([optionValue, optionLabel]) => (
+          <button
+            key={optionValue}
+            type="button"
+            onClick={() => onChange(optionValue)}
+            className={`rounded-full border px-3 py-2 text-sm transition ${value === optionValue ? "border-[var(--accent-border)] bg-[var(--accent-soft)] text-[var(--accent)]" : "border-[var(--border-subtle)] bg-[var(--surface-deep)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}
+          >
+            {optionLabel}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -403,7 +661,9 @@ function formatRole(role?: string) {
 }
 
 function formatProvider(provider?: string) {
-  if (!provider || provider === "none") return "搜索服务";
+  if (!provider || provider === "none") return "未配置";
   if (provider.toLowerCase() === "tavily") return "Tavily";
+  if (provider.toLowerCase() === "deepseek") return "DeepSeek";
+  if (provider.toLowerCase() === "openai") return "OpenAI";
   return provider;
 }

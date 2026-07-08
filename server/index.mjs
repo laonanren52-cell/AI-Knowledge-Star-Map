@@ -15,6 +15,7 @@ const nodeTypes = new Set(["project", "document", "tech", "problem", "output", "
 const ADMIN_USER_ID = "admin_default";
 const ADMIN_PUBLIC_WORKSPACE_ID = "admin_public_default";
 const DB_PATH = resolve(process.cwd(), process.env.ZHIMAI_DB_PATH || "server/data/zhimai-db.json");
+const SYSTEM_CONFIG_PATH = resolve(process.cwd(), process.env.ZHIMAI_SYSTEM_CONFIG_PATH || "server/data/system-config.json");
 
 function nowIso() {
   return new Date().toISOString();
@@ -134,6 +135,208 @@ function defaultSettings() {
   };
 }
 
+function defaultUserPreferences() {
+  return {
+    defaultHome: "dashboard",
+    graphMode: "global",
+    animationsEnabled: true,
+    tipsEnabled: true,
+    density: "comfortable",
+    sidebarExpanded: false,
+    updatedAt: nowIso(),
+  };
+}
+
+function normalizeUserPreferences(value = {}) {
+  const defaults = defaultUserPreferences();
+  return {
+    defaultHome: ["dashboard", "upload", "graph", "assistant", "outputs"].includes(value.defaultHome) ? value.defaultHome : defaults.defaultHome,
+    graphMode: ["global", "document", "recent"].includes(value.graphMode) ? value.graphMode : defaults.graphMode,
+    animationsEnabled: typeof value.animationsEnabled === "boolean" ? value.animationsEnabled : defaults.animationsEnabled,
+    tipsEnabled: typeof value.tipsEnabled === "boolean" ? value.tipsEnabled : defaults.tipsEnabled,
+    density: ["compact", "comfortable"].includes(value.density) ? value.density : defaults.density,
+    sidebarExpanded: typeof value.sidebarExpanded === "boolean" ? value.sidebarExpanded : defaults.sidebarExpanded,
+    updatedAt: value.updatedAt || defaults.updatedAt,
+  };
+}
+
+function defaultSystemConfig() {
+  const inferredProvider = process.env.AI_PROVIDER || (process.env.DEEPSEEK_API_KEY ? "deepseek" : process.env.OPENAI_API_KEY ? "openai" : "mock");
+  const inferredModel =
+    process.env.AI_MODEL ||
+    (inferredProvider === "deepseek" ? process.env.DEEPSEEK_MODEL || "deepseek-chat" : inferredProvider === "openai" ? process.env.OPENAI_MODEL || "gpt-4o-mini" : "mock");
+  return {
+    ai: {
+      provider: inferredProvider,
+      model: inferredModel,
+      enabled: process.env.AI_ENABLED !== "false",
+      allowMock: process.env.ALLOW_MOCK_MODE !== "false",
+      deepseekApiKey: "",
+      openaiApiKey: "",
+      updatedAt: nowIso(),
+    },
+    search: {
+      enabled: process.env.WEB_SEARCH_ENABLED === "true" || Boolean(process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY || process.env.SERPAPI_KEY),
+      provider: process.env.SEARCH_PROVIDER || (process.env.TAVILY_API_KEY ? "tavily" : process.env.BRAVE_SEARCH_API_KEY ? "brave" : process.env.SERPAPI_KEY ? "serpapi" : "none"),
+      tavilyApiKey: "",
+      braveApiKey: "",
+      serpApiKey: "",
+      updatedAt: nowIso(),
+    },
+    ocr: {
+      enabled: process.env.OCR_ENABLED === "true" || Boolean(process.env.OCR_API_KEY || process.env.OCR_PROVIDER),
+      provider: process.env.OCR_PROVIDER || "none",
+      apiKey: "",
+      updatedAt: nowIso(),
+    },
+    updatedAt: nowIso(),
+  };
+}
+
+function normalizeSystemConfig(value = {}) {
+  const defaults = defaultSystemConfig();
+  return {
+    ai: {
+      ...defaults.ai,
+      ...(value.ai && typeof value.ai === "object" ? value.ai : {}),
+      provider: String(value.ai?.provider || defaults.ai.provider || "mock").toLowerCase(),
+      model: String(value.ai?.model || defaults.ai.model || "mock"),
+      enabled: typeof value.ai?.enabled === "boolean" ? value.ai.enabled : defaults.ai.enabled,
+      allowMock: typeof value.ai?.allowMock === "boolean" ? value.ai.allowMock : defaults.ai.allowMock,
+      updatedAt: value.ai?.updatedAt || defaults.ai.updatedAt,
+    },
+    search: {
+      ...defaults.search,
+      ...(value.search && typeof value.search === "object" ? value.search : {}),
+      provider: String(value.search?.provider || defaults.search.provider || "none").toLowerCase(),
+      enabled: typeof value.search?.enabled === "boolean" ? value.search.enabled : defaults.search.enabled,
+      updatedAt: value.search?.updatedAt || defaults.search.updatedAt,
+    },
+    ocr: {
+      ...defaults.ocr,
+      ...(value.ocr && typeof value.ocr === "object" ? value.ocr : {}),
+      provider: String(value.ocr?.provider || defaults.ocr.provider || "none").toLowerCase(),
+      enabled: typeof value.ocr?.enabled === "boolean" ? value.ocr.enabled : defaults.ocr.enabled,
+      updatedAt: value.ocr?.updatedAt || defaults.ocr.updatedAt,
+    },
+    updatedAt: value.updatedAt || defaults.updatedAt,
+  };
+}
+
+function readSystemConfig() {
+  if (!existsSync(SYSTEM_CONFIG_PATH)) return normalizeSystemConfig({});
+  try {
+    return normalizeSystemConfig(JSON.parse(readFileSync(SYSTEM_CONFIG_PATH, "utf8")));
+  } catch {
+    return normalizeSystemConfig({});
+  }
+}
+
+function saveSystemConfig(config) {
+  mkdirSync(dirname(SYSTEM_CONFIG_PATH), { recursive: true });
+  writeFileSync(SYSTEM_CONFIG_PATH, JSON.stringify(normalizeSystemConfig(config), null, 2), "utf8");
+}
+
+function envKeyForProvider(provider) {
+  if (provider === "deepseek") return process.env.DEEPSEEK_API_KEY || "";
+  if (provider === "openai") return process.env.OPENAI_API_KEY || "";
+  return "";
+}
+
+function storedKeyForProvider(config, provider) {
+  if (provider === "deepseek") return config.ai.deepseekApiKey || "";
+  if (provider === "openai") return config.ai.openaiApiKey || "";
+  return "";
+}
+
+function searchKey(config, provider) {
+  if (provider === "tavily") return config.search.tavilyApiKey || process.env.TAVILY_API_KEY || "";
+  if (provider === "brave") return config.search.braveApiKey || process.env.BRAVE_SEARCH_API_KEY || "";
+  if (provider === "serpapi") return config.search.serpApiKey || process.env.SERPAPI_KEY || "";
+  return "";
+}
+
+function maskSecret(value = "") {
+  if (!value) return "";
+  const tail = value.slice(-4);
+  const prefix = value.startsWith("sk-") ? "sk-" : "";
+  return `${prefix}****${tail}`;
+}
+
+function configSummary(config = readSystemConfig()) {
+  const provider = config.ai.provider;
+  const aiKey = storedKeyForProvider(config, provider) || envKeyForProvider(provider);
+  const searchProvider = config.search.provider;
+  const activeSearchKey = searchKey(config, searchProvider);
+  const ocrKey = config.ocr.apiKey || process.env.OCR_API_KEY || "";
+  return {
+    ai: {
+      provider,
+      model: config.ai.model,
+      enabled: config.ai.enabled,
+      allowMock: config.ai.allowMock,
+      configured: provider === "mock" ? true : Boolean(aiKey),
+      apiKeyConfigured: Boolean(aiKey),
+      apiKeyMasked: maskSecret(aiKey),
+      updatedAt: config.ai.updatedAt,
+    },
+    search: {
+      enabled: config.search.enabled,
+      provider: searchProvider,
+      configured: Boolean(config.search.enabled && activeSearchKey),
+      apiKeyConfigured: Boolean(activeSearchKey),
+      apiKeyMasked: maskSecret(activeSearchKey),
+      updatedAt: config.search.updatedAt,
+    },
+    ocr: {
+      enabled: config.ocr.enabled,
+      provider: config.ocr.provider,
+      configured: Boolean(config.ocr.enabled && (ocrKey || config.ocr.provider !== "none")),
+      apiKeyConfigured: Boolean(ocrKey),
+      apiKeyMasked: maskSecret(ocrKey),
+      updatedAt: config.ocr.updatedAt,
+    },
+    updatedAt: config.updatedAt,
+  };
+}
+
+function applySystemConfigPatch(current, payload = {}) {
+  const stamp = nowIso();
+  const next = normalizeSystemConfig(current);
+  if (payload.ai && typeof payload.ai === "object") {
+    const ai = payload.ai;
+    if (ai.provider !== undefined) next.ai.provider = String(ai.provider || "mock").toLowerCase();
+    if (ai.model !== undefined) next.ai.model = String(ai.model || next.ai.model).trim() || next.ai.model;
+    if (typeof ai.enabled === "boolean") next.ai.enabled = ai.enabled;
+    if (typeof ai.allowMock === "boolean") next.ai.allowMock = ai.allowMock;
+    if (typeof ai.apiKey === "string" && ai.apiKey.trim()) {
+      if (next.ai.provider === "openai") next.ai.openaiApiKey = ai.apiKey.trim();
+      else if (next.ai.provider === "deepseek") next.ai.deepseekApiKey = ai.apiKey.trim();
+    }
+    next.ai.updatedAt = stamp;
+  }
+  if (payload.search && typeof payload.search === "object") {
+    const search = payload.search;
+    if (typeof search.enabled === "boolean") next.search.enabled = search.enabled;
+    if (search.provider !== undefined) next.search.provider = String(search.provider || "none").toLowerCase();
+    if (typeof search.apiKey === "string" && search.apiKey.trim()) {
+      if (next.search.provider === "tavily") next.search.tavilyApiKey = search.apiKey.trim();
+      else if (next.search.provider === "brave") next.search.braveApiKey = search.apiKey.trim();
+      else if (next.search.provider === "serpapi") next.search.serpApiKey = search.apiKey.trim();
+    }
+    next.search.updatedAt = stamp;
+  }
+  if (payload.ocr && typeof payload.ocr === "object") {
+    const ocr = payload.ocr;
+    if (typeof ocr.enabled === "boolean") next.ocr.enabled = ocr.enabled;
+    if (ocr.provider !== undefined) next.ocr.provider = String(ocr.provider || "none").toLowerCase();
+    if (typeof ocr.apiKey === "string" && ocr.apiKey.trim()) next.ocr.apiKey = ocr.apiKey.trim();
+    next.ocr.updatedAt = stamp;
+  }
+  next.updatedAt = stamp;
+  return next;
+}
+
 function normalizeDb(db) {
   const stamp = nowIso();
   const admin = createAdminUser();
@@ -172,7 +375,7 @@ function normalizeDb(db) {
   }
 
   return {
-    users,
+    users: users.map((user) => ({ ...user, preferences: normalizeUserPreferences(user.preferences) })),
     workspaces: [...workspaceMap.values()],
     workspaceData,
     sessions: Array.isArray(db?.sessions) ? db.sessions : [],
@@ -366,7 +569,7 @@ function jsonResponse(res, status, payload) {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
     "Access-Control-Allow-Origin": process.env.CORS_ORIGIN || "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Zhimai-User-Id,X-Zhimai-User-Role,X-Zhimai-Workspace-Id",
   });
   res.end(body);
@@ -401,39 +604,62 @@ function readJson(req) {
 }
 
 function getProviderConfig() {
-  const requested = (process.env.AI_PROVIDER || "").toLowerCase();
-  if ((requested === "deepseek" || !requested) && process.env.DEEPSEEK_API_KEY) {
+  const systemConfig = readSystemConfig();
+  const requested = String(systemConfig.ai.provider || process.env.AI_PROVIDER || "").toLowerCase();
+  const enabled = systemConfig.ai.enabled !== false;
+  if (!enabled) return { provider: "mock", apiKey: "", endpoint: "", model: "mock", enabled: false, configured: false };
+  if (requested === "deepseek") {
+    const apiKey = systemConfig.ai.deepseekApiKey || process.env.DEEPSEEK_API_KEY || "";
+    return {
+      provider: "deepseek",
+      apiKey,
+      endpoint: process.env.DEEPSEEK_API_BASE_URL || "https://api.deepseek.com/chat/completions",
+      model: systemConfig.ai.model || process.env.DEEPSEEK_MODEL || process.env.AI_MODEL || "deepseek-chat",
+      enabled: true,
+      configured: Boolean(apiKey),
+    };
+  }
+  if (requested === "openai") {
+    const apiKey = systemConfig.ai.openaiApiKey || process.env.OPENAI_API_KEY || "";
+    return {
+      provider: "openai",
+      apiKey,
+      endpoint: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1/chat/completions",
+      model: systemConfig.ai.model || process.env.OPENAI_MODEL || process.env.AI_MODEL || "gpt-4o-mini",
+      enabled: true,
+      configured: Boolean(apiKey),
+    };
+  }
+  if (!requested && process.env.DEEPSEEK_API_KEY) {
     return {
       provider: "deepseek",
       apiKey: process.env.DEEPSEEK_API_KEY,
       endpoint: process.env.DEEPSEEK_API_BASE_URL || "https://api.deepseek.com/chat/completions",
-      model: process.env.DEEPSEEK_MODEL || process.env.AI_MODEL || "deepseek-chat",
+      model: systemConfig.ai.model || process.env.DEEPSEEK_MODEL || process.env.AI_MODEL || "deepseek-chat",
+      enabled: true,
+      configured: true,
     };
   }
-  if ((requested === "openai" || !requested) && process.env.OPENAI_API_KEY) {
+  if (!requested && process.env.OPENAI_API_KEY) {
     return {
       provider: "openai",
       apiKey: process.env.OPENAI_API_KEY,
       endpoint: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1/chat/completions",
-      model: process.env.OPENAI_MODEL || process.env.AI_MODEL || "gpt-4o-mini",
+      model: systemConfig.ai.model || process.env.OPENAI_MODEL || process.env.AI_MODEL || "gpt-4o-mini",
+      enabled: true,
+      configured: true,
     };
   }
-  return { provider: "mock", apiKey: "", endpoint: "", model: "mock" };
+  return { provider: "mock", apiKey: "", endpoint: "", model: "mock", enabled: true, configured: true };
 }
 
 function getSearchConfig() {
-  if (process.env.WEB_SEARCH_ENABLED === "false") return { enabled: false, configured: false, provider: "disabled" };
-  const requested = (process.env.SEARCH_PROVIDER || "").toLowerCase();
-  if ((requested === "tavily" || !requested) && process.env.TAVILY_API_KEY) {
-    return { enabled: true, configured: true, provider: "tavily", apiKey: process.env.TAVILY_API_KEY };
-  }
-  if ((requested === "brave" || !requested) && process.env.BRAVE_SEARCH_API_KEY) {
-    return { enabled: true, configured: true, provider: "brave", apiKey: process.env.BRAVE_SEARCH_API_KEY };
-  }
-  if ((requested === "serpapi" || !requested) && process.env.SERPAPI_KEY) {
-    return { enabled: true, configured: true, provider: "serpapi", apiKey: process.env.SERPAPI_KEY };
-  }
-  return { enabled: false, configured: false, provider: requested || "none" };
+  const systemConfig = readSystemConfig();
+  if (systemConfig.search.enabled === false) return { enabled: false, configured: false, provider: systemConfig.search.provider || "disabled", apiKey: "" };
+  const requested = String(systemConfig.search.provider || process.env.SEARCH_PROVIDER || "").toLowerCase();
+  const provider = requested || (process.env.TAVILY_API_KEY ? "tavily" : process.env.BRAVE_SEARCH_API_KEY ? "brave" : process.env.SERPAPI_KEY ? "serpapi" : "none");
+  const apiKey = searchKey(systemConfig, provider);
+  return { enabled: Boolean(provider && provider !== "none" && provider !== "disabled"), configured: Boolean(apiKey), provider, apiKey };
 }
 
 function slug(text) {
@@ -697,6 +923,9 @@ async function callChatJson(messages, temperature = 0.25, allowMock = true) {
     }
     return null;
   }
+  if (!config.apiKey || config.configured === false) {
+    throw new Error(`${config.provider} API Key 未配置。请在设置页重新填写，或在后端 .env 中配置对应密钥。`);
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Number(process.env.AI_TIMEOUT_MS || 45000));
@@ -956,17 +1185,33 @@ async function route(req, res) {
   if (req.method === "GET" && url.pathname === "/api/health") {
     const config = getProviderConfig();
     const search = getSearchConfig();
+    const systemConfig = readSystemConfig();
+    const summary = configSummary(systemConfig);
     jsonResponse(res, 200, {
       ok: true,
       provider: config.provider,
       model: config.model,
+      configured: config.configured,
       search: { enabled: search.enabled, configured: search.configured, provider: search.provider },
       ocr: {
-        enabled: false,
-        configured: Boolean(process.env.OCR_API_KEY || process.env.OCR_PROVIDER),
-        provider: process.env.OCR_PROVIDER || "none",
+        enabled: systemConfig.ocr.enabled,
+        configured: summary.ocr.configured,
+        provider: systemConfig.ocr.provider || "none",
       },
+      configUpdatedAt: summary.updatedAt,
     });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/user/preferences") {
+    const db = readDb();
+    const user = userFromRequest(req, db);
+    if (!user?.id || user.id === "anonymous") {
+      jsonResponse(res, 401, { error: "请先登录后再读取偏好设置。" });
+      return;
+    }
+    user.preferences = normalizeUserPreferences(user.preferences);
+    saveDb(db);
+    jsonResponse(res, 200, { preferences: user.preferences });
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/auth/demo-users") {
@@ -1007,6 +1252,16 @@ async function route(req, res) {
     });
     return;
   }
+  if (req.method === "GET" && url.pathname === "/api/admin/config") {
+    const db = readDb();
+    const user = userFromRequest(req, db);
+    if (user.role !== "admin" || user.canAccessAdminPanel === false) {
+      jsonResponse(res, 403, { error: "只有管理员可以查看系统配置。" });
+      return;
+    }
+    jsonResponse(res, 200, { config: configSummary(readSystemConfig()) });
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/workspaces") {
     const db = readDb();
     const user = userFromRequest(req, db);
@@ -1027,13 +1282,45 @@ async function route(req, res) {
     jsonResponse(res, 200, db.workspaceData[workspaceId] ?? emptyDataset(workspaceId));
     return;
   }
-  if (req.method !== "POST") {
+  if (req.method !== "POST" && req.method !== "PATCH") {
     jsonResponse(res, 405, { error: "只支持 POST 请求。" });
     return;
   }
 
   try {
     const payload = await readJson(req);
+    if (req.method === "PATCH" && url.pathname === "/api/user/preferences") {
+      const db = readDb();
+      const user = userFromRequest(req, db);
+      if (!user?.id || user.id === "anonymous") {
+        jsonResponse(res, 401, { error: "请先登录后再保存偏好设置。" });
+        return;
+      }
+      user.preferences = normalizeUserPreferences({ ...(user.preferences ?? {}), ...(payload.preferences ?? payload), updatedAt: nowIso() });
+      user.lastActiveAt = nowIso();
+      recordActivity(db, { user, workspaceId: payload.workspaceId, actionType: "settings", targetType: "preferences", targetId: user.id, detail: "更新个人偏好设置", req });
+      saveDb(db);
+      jsonResponse(res, 200, { preferences: user.preferences });
+      return;
+    }
+    if (req.method === "PATCH" && url.pathname === "/api/admin/config") {
+      const db = readDb();
+      const admin = userFromRequest(req, db);
+      if (admin.role !== "admin" || admin.canAccessAdminPanel === false) {
+        jsonResponse(res, 403, { error: "只有管理员可以修改系统配置。" });
+        return;
+      }
+      const nextConfig = applySystemConfigPatch(readSystemConfig(), payload.config ?? payload);
+      saveSystemConfig(nextConfig);
+      recordActivity(db, { user: admin, workspaceId: ADMIN_PUBLIC_WORKSPACE_ID, actionType: "settings", targetType: "system_config", targetId: "system-config", detail: "管理员更新 AI 与系统配置", req });
+      saveDb(db);
+      jsonResponse(res, 200, { config: configSummary(nextConfig) });
+      return;
+    }
+    if (req.method === "PATCH") {
+      jsonResponse(res, 404, { error: "接口不存在。" });
+      return;
+    }
     if (url.pathname === "/api/auth/login") {
       const db = readDb();
       const username = String(payload.username || "").trim().toLowerCase();

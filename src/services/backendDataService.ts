@@ -1,7 +1,7 @@
 import type { GeneratedOutput } from "../types/ai";
 import type { KnowledgeDocument } from "../types/document";
 import type { GraphData } from "../types/graph";
-import type { SystemAuditLog, SystemMetrics, SystemSettings, Workspace, ZhimaiUser } from "../types/workspace";
+import type { SystemAuditLog, SystemMetrics, SystemSettings, UserPreferences, Workspace, ZhimaiUser } from "../types/workspace";
 import type { RecentActivity } from "../store/knowledgeStore";
 import { apiClient, ApiClientError } from "./apiClient";
 
@@ -33,6 +33,56 @@ export interface AdminOverview {
   activityLogs: SystemAuditLog[];
   metrics: SystemMetrics;
   settings: SystemSettings;
+}
+
+export interface SystemConfigSummary {
+  ai: {
+    provider: string;
+    model: string;
+    enabled: boolean;
+    allowMock: boolean;
+    configured: boolean;
+    apiKeyConfigured: boolean;
+    apiKeyMasked?: string;
+    updatedAt?: string;
+  };
+  search: {
+    enabled: boolean;
+    provider: string;
+    configured: boolean;
+    apiKeyConfigured: boolean;
+    apiKeyMasked?: string;
+    updatedAt?: string;
+  };
+  ocr: {
+    enabled: boolean;
+    provider: string;
+    configured: boolean;
+    apiKeyConfigured: boolean;
+    apiKeyMasked?: string;
+    updatedAt?: string;
+  };
+  updatedAt?: string;
+}
+
+export interface SystemConfigPatch {
+  ai?: {
+    provider?: string;
+    model?: string;
+    enabled?: boolean;
+    allowMock?: boolean;
+    apiKey?: string;
+  };
+  search?: {
+    enabled?: boolean;
+    provider?: string;
+    apiKey?: string;
+  };
+  ocr?: {
+    enabled?: boolean;
+    provider?: string;
+    apiKey?: string;
+  };
 }
 
 export function getSessionToken() {
@@ -127,6 +177,28 @@ export async function recordRemoteActivity(activity: {
 
 export async function getAdminOverview() {
   return apiRequest<AdminOverview>("/api/admin/overview");
+}
+
+export async function getAdminConfig() {
+  return apiRequest<{ config: SystemConfigSummary }>("/api/admin/config");
+}
+
+export async function updateAdminConfig(config: SystemConfigPatch) {
+  return apiRequest<{ config: SystemConfigSummary }>("/api/admin/config", {
+    method: "PATCH",
+    body: JSON.stringify({ config }),
+  });
+}
+
+export async function getUserPreferences() {
+  return apiRequest<{ preferences: UserPreferences }>("/api/user/preferences");
+}
+
+export async function updateUserPreferences(preferences: Partial<UserPreferences>) {
+  return apiRequest<{ preferences: UserPreferences }>("/api/user/preferences", {
+    method: "PATCH",
+    body: JSON.stringify({ preferences }),
+  });
 }
 
 export async function updateRemoteUser(userId: string, action: "enable" | "disable" | "delete" | "password", payload: Record<string, unknown> = {}) {

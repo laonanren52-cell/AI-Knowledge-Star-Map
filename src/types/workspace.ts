@@ -26,6 +26,7 @@ export interface ZhimaiUser {
   loginCount?: number;
   mustChangePassword?: boolean;
   isDemo?: boolean;
+  preferences?: UserPreferences;
 }
 
 export interface AuthUserRecord extends ZhimaiUser {
@@ -59,6 +60,16 @@ export interface SystemSettings {
   storageMode: "local" | "api";
   version: string;
   updatedAt: string;
+}
+
+export interface UserPreferences {
+  defaultHome: "dashboard" | "upload" | "graph" | "assistant" | "outputs";
+  graphMode: "global" | "document" | "recent";
+  animationsEnabled: boolean;
+  tipsEnabled: boolean;
+  density: "compact" | "comfortable";
+  sidebarExpanded: boolean;
+  updatedAt?: string;
 }
 
 export interface Workspace {

@@ -13,8 +13,10 @@ export interface BackendHealth {
   ok: boolean;
   provider: string;
   model: string;
+  configured?: boolean;
   search?: { enabled: boolean; provider: string; configured?: boolean };
   ocr?: { enabled: boolean; configured?: boolean; provider?: string };
+  configUpdatedAt?: string;
 }
 
 export interface AskOptions {

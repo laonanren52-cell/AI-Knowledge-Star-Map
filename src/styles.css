@@ -399,9 +399,12 @@ header {
 
 .app-topbar {
   display: grid;
-  grid-template-columns: minmax(9.5rem, 12rem) minmax(max-content, 1fr) auto;
+  grid-template-columns: max-content max-content max-content;
   align-items: center;
-  gap: 0.9rem;
+  justify-content: center;
+  gap: clamp(0.65rem, 1.5vw, 1.1rem);
+  width: fit-content;
+  max-width: calc(100vw - 2rem);
   min-height: 4rem;
 }
 
@@ -426,8 +429,9 @@ header {
 
 .topbar-nav {
   justify-self: center;
+  width: max-content;
   min-width: max-content;
-  max-width: 100%;
+  max-width: min(100%, 760px);
   overflow: visible;
   white-space: nowrap;
 }
@@ -440,7 +444,8 @@ header {
 }
 
 .brand-wordmark {
-  width: 12rem;
+  width: auto;
+  min-width: 10.75rem;
   min-height: 2.75rem;
 }
 
@@ -501,6 +506,7 @@ header {
 .nav-tab {
   flex: 0 0 auto;
   min-height: 2.75rem;
+  min-width: max-content;
   white-space: nowrap;
   transition: color var(--motion-normal) var(--ease-liquid), background var(--motion-normal) var(--ease-liquid), transform var(--motion-normal) var(--ease-liquid), box-shadow var(--motion-normal) var(--ease-liquid);
 }
@@ -521,6 +527,26 @@ header {
 
 .nav-tab:hover {
   transform: translateY(-1px);
+}
+
+.zhimai-motion-off *,
+.zhimai-motion-off *::before,
+.zhimai-motion-off *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+.zhimai-motion-off .ambient-visual-layer {
+  opacity: 0.38;
+}
+
+.zhimai-density-compact .page-shell {
+  padding-top: 1rem;
+}
+
+.zhimai-density-compact .lux-card {
+  border-radius: 1.35rem;
 }
 
 .page-shell {
@@ -1773,7 +1799,9 @@ header {
 
 @media (max-width: 1439px) {
   .app-topbar {
-    grid-template-columns: minmax(8.75rem, 11rem) minmax(0, 1fr) auto;
+    grid-template-columns: max-content minmax(0, max-content) max-content;
+    justify-content: center;
+    gap: 0.65rem;
   }
 
   .ai-mode-glass {
@@ -1781,7 +1809,9 @@ header {
   }
 
   .topbar-nav {
-    justify-self: start;
+    justify-self: center;
+    width: max-content;
+    max-width: min(100%, 680px);
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -1914,6 +1944,7 @@ header {
   .app-topbar {
     grid-template-columns: 1fr auto;
     gap: 0.55rem;
+    width: min(100%, calc(100vw - 1.5rem));
     border-radius: 1.35rem;
   }
 
@@ -1922,12 +1953,14 @@ header {
   }
 
   .brand-wordmark {
-    width: 11rem;
+    width: auto;
+    min-width: 10.25rem;
   }
 
   .topbar-nav {
     grid-column: 1 / -1;
     justify-self: stretch;
+    width: 100%;
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
