@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { mockDocuments } from "../data/mockDocuments";
 import { mockGraphData } from "../data/mockGraphData";
 import { canEditWorkspace } from "../services/authService";
@@ -85,6 +85,7 @@ interface KnowledgeContextValue {
   currentWorkspace: Workspace | null;
   currentAccess: WorkspaceAccess | null;
   canEditCurrentWorkspace: boolean;
+  lastSaveError: { id: number; message: string } | null;
   ingestAnalysis: (file: File, content: string, analysis: AnalysisResult, parsed?: ParsedDocument) => void;
   replaceDocumentAnalysis: (documentId: string, content: string, analysis: AnalysisResult, parsed?: ParsedDocument) => void;
   createNode: (node: GraphNode) => void;
@@ -915,6 +916,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const scopedState = useMemo(() => selectWorkspaceState(state, currentWorkspace, currentAccess), [currentAccess, currentWorkspace, state]);
   const loadedWorkspaceRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const [lastSaveError, setLastSaveError] = useState<{ id: number; message: string } | null>(null);
 
   useEffect(() => {
     if (!currentWorkspace) return;
@@ -965,7 +967,14 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         outputs: scopedState.outputs,
         recentActivities: scopedState.recentActivities,
         revision: scopedState.revision,
-      });
+      })
+        .then(() => setLastSaveError(null))
+        .catch(() => {
+          setLastSaveError({
+            id: Date.now(),
+            message: "星图数据保存失败，位置已保留在当前画布。请检查后端服务后重试。",
+          });
+        });
     }, 320);
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
@@ -984,6 +993,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       currentWorkspace,
       currentAccess,
       canEditCurrentWorkspace,
+      lastSaveError,
       ingestAnalysis: (file, content, analysis, parsed) => {
         if (!guardWrite()) return;
         dispatch({ type: "ingestAnalysis", workspaceId, file, content, analysis, parsed });
@@ -1058,7 +1068,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         void recordRemoteActivity({ workspaceId, actionType: "ask", targetType: "copilot", detail: question.slice(0, 180) });
       },
     }),
-    [canEditCurrentWorkspace, currentAccess, currentWorkspace, scopedState, workspaceId],
+    [canEditCurrentWorkspace, currentAccess, currentWorkspace, lastSaveError, scopedState, workspaceId],
   );
 
   return <KnowledgeContext.Provider value={value}>{children}</KnowledgeContext.Provider>;

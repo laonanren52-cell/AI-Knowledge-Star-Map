@@ -45,6 +45,7 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
     replaceDocumentAnalysis,
     canEditCurrentWorkspace,
     currentWorkspace,
+    lastSaveError,
   } = useKnowledgeStore();
   const { markAiSuccess, markAiFailure } = useAiStatus();
   const { publishWorkspace } = useAuthStore();
@@ -108,6 +109,13 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
     const nextEdge = baseGraph.edges.find((edge) => edge.id === selectedEdge.id) ?? null;
     setSelectedEdge(nextEdge);
   }, [baseGraph.edges, selectedEdge?.id]);
+
+  useEffect(() => {
+    if (!lastSaveError) return;
+    setGeneratedToast(lastSaveError.message);
+    const timer = window.setTimeout(() => setGeneratedToast(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [lastSaveError]);
 
   useEffect(() => {
     if (!toolDrawerOpen) return;
