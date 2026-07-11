@@ -74,6 +74,18 @@ type SearchRipple = {
   duration: number;
 };
 
+type DragVisualState = {
+  nodeId: string;
+  neighborIds: Set<string>;
+  edgeIds: Set<string>;
+  viewPosition: { x: number; y: number };
+  scale: number;
+  lastDomPosition?: { x: number; y: number };
+  velocity: { x: number; y: number };
+  phase: "dragging" | "settling";
+  releasedAt?: number;
+};
+
 interface KnowledgeGraphProps {
   data: GraphData;
   selectedNodeId: string | null;
@@ -195,7 +207,7 @@ function toVisEdge(
       hover: colorWithAlpha("var(--accent)", 0.9),
       opacity: Math.min(1, baseAlpha * opacityScale),
     },
-    smooth: { enabled: true, type: "continuous", roundness: 0.28 },
+    smooth: { enabled: true, type: "continuous", roundness: 0.32 },
     selectionWidth: 1.5,
   };
 }
@@ -258,6 +270,7 @@ export default function KnowledgeGraph({
   const starParticlesRef = useRef<StarParticle[]>([]);
   const ripplesRef = useRef<SearchRipple[]>([]);
   const draggingNodeRef = useRef<string | null>(null);
+  const dragVisualRef = useRef<DragVisualState | null>(null);
   const positionSaveTimerRef = useRef<number | null>(null);
   const pendingPositionSavesRef = useRef(new Map<string, { id: string; x: number; y: number; fixed?: boolean; layoutMode?: GraphLayoutMode; manualPosition?: boolean }>());
   const layoutSnapshotRef = useRef(new Map<string, { id: string; x: number; y: number; fixed?: boolean; layoutMode?: GraphLayoutMode; manualPosition?: boolean }>());
@@ -473,6 +486,201 @@ export default function KnowledgeGraph({
     });
   }
 
+  function toCurrentVisualNode(node: GraphNode): VisNodeItem {
+    const graphData = graphDataRef.current;
+    const activeId = selectedRef.current;
+    const searchHits = new Set(searchNodes(graphData.nodes, searchQueryRef.current.trim()).map((item) => item.id));
+    if (!activeId || !nodeMapRef.current.has(activeId)) {
+      return toVisNode(node, false, false, false, {}, searchHits.has(node.id), true);
+    }
+
+    const relatedIds = new Set<string>([activeId, ...getNeighborIds(activeId, graphData.edges)]);
+    return toVisNode(
+      node,
+      node.id === activeId,
+      !relatedIds.has(node.id),
+      false,
+      {
+        sizeDelta: node.id === activeId ? 0.8 : 0,
+        shadowScale: node.id === activeId ? 1.35 : 1,
+        showLabel: node.id === activeId || relatedIds.has(node.id),
+      },
+      searchHits.has(node.id),
+      true,
+    );
+  }
+
+  function toCurrentVisualEdge(edge: GraphEdge): VisEdgeItem {
+    const activeId = selectedRef.current;
+    if (!activeId || !nodeMapRef.current.has(activeId)) {
+      return toVisEdge(edge, edge.id === selectedEdgeRef.current);
+    }
+
+    const relatedIds = new Set<string>([activeId, ...getNeighborIds(activeId, graphDataRef.current.edges)]);
+    return toVisEdge(
+      edge,
+      edge.id === selectedEdgeRef.current || edge.from === activeId || edge.to === activeId,
+      !(relatedIds.has(edge.from) && relatedIds.has(edge.to)),
+    );
+  }
+
+  function beginDragVisual(nodeId: string) {
+    const network = networkRef.current;
+    const nodes = nodesRef.current;
+    const edges = edgesRef.current;
+    const node = nodeMapRef.current.get(nodeId);
+    if (!network || !nodes || !edges || !node) return;
+
+    const directEdges = graphDataRef.current.edges.filter((edge) => edge.from === nodeId || edge.to === nodeId);
+    const neighborIds = new Set<string>();
+    directEdges.forEach((edge) => neighborIds.add(edge.from === nodeId ? edge.to : edge.from));
+    const viewPosition = network.getViewPosition();
+    const state: DragVisualState = {
+      nodeId,
+      neighborIds,
+      edgeIds: new Set(directEdges.map((edge) => edge.id)),
+      viewPosition: { x: viewPosition.x, y: viewPosition.y },
+      scale: network.getScale(),
+      lastDomPosition: getDomPosition(nodeId) ?? undefined,
+      velocity: { x: 0, y: 0 },
+      phase: "dragging",
+    };
+
+    dragVisualRef.current = state;
+    nodes.update([
+      toVisNode(
+        node,
+        selectedRef.current === nodeId,
+        false,
+        false,
+        {
+          opacity: 1,
+          sizeDelta: Math.max(1.2, sizeForNode(node) * 0.1),
+          shadowScale: 2.1,
+          showLabel: true,
+        },
+        true,
+        true,
+      ),
+    ]);
+    edges.update(directEdges.map((edge) => toVisEdge(edge, true)));
+    if (containerRef.current) containerRef.current.style.cursor = "grabbing";
+  }
+
+  function trackDragMotion(nodeId: string) {
+    const state = dragVisualRef.current;
+    if (!state || state.nodeId !== nodeId || state.phase !== "dragging") return;
+    const position = getDomPosition(nodeId);
+    if (!position) return;
+    if (state.lastDomPosition) {
+      const dx = Math.max(-18, Math.min(18, position.x - state.lastDomPosition.x));
+      const dy = Math.max(-18, Math.min(18, position.y - state.lastDomPosition.y));
+      state.velocity = {
+        x: state.velocity.x * 0.35 + dx * 0.65,
+        y: state.velocity.y * 0.35 + dy * 0.65,
+      };
+    }
+    state.lastDomPosition = position;
+  }
+
+  function finishDragVisual(nodeId: string) {
+    const state = dragVisualRef.current;
+    if (containerRef.current) containerRef.current.style.cursor = "";
+    if (!state || state.nodeId !== nodeId) return;
+
+    const node = nodeMapRef.current.get(nodeId);
+    if (node) nodesRef.current?.update([toCurrentVisualNode(node)]);
+    const edges = [...state.edgeIds]
+      .map((edgeId) => edgeMapRef.current.get(edgeId))
+      .filter((edge): edge is GraphEdge => Boolean(edge));
+    if (edges.length > 0) edgesRef.current?.update(edges.map((edge) => toCurrentVisualEdge(edge)));
+
+    state.phase = "settling";
+    state.releasedAt = performance.now();
+  }
+
+  function drawDragFeedback(ctx: CanvasRenderingContext2D, now: number, width: number, height: number) {
+    const state = dragVisualRef.current;
+    if (!state) return false;
+
+    const releaseProgress = state.phase === "settling" ? Math.min(1, (now - (state.releasedAt ?? now)) / 220) : 0;
+    if (releaseProgress >= 1) {
+      dragVisualRef.current = null;
+      return false;
+    }
+
+    const fade = state.phase === "settling" ? (1 - releaseProgress) ** 3 : 1;
+    const activePosition = getDomPosition(state.nodeId);
+    if (!activePosition) return false;
+
+    ctx.save();
+    ctx.fillStyle = colorWithAlpha("var(--page-bg)", 0.24 * fade);
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = "destination-out";
+    const localNodeIds = [state.nodeId, ...state.neighborIds];
+    localNodeIds.forEach((nodeId) => {
+      const position = getDomPosition(nodeId);
+      if (!position) return;
+      const radius = nodeId === state.nodeId ? 52 : 30;
+      const gradient = ctx.createRadialGradient(position.x, position.y, 0, position.x, position.y, radius);
+      gradient.addColorStop(0, "rgba(0, 0, 0, 0.98)");
+      gradient.addColorStop(0.54, "rgba(0, 0, 0, 0.64)");
+      gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+
+    const speed = Math.min(1, Math.hypot(state.velocity.x, state.velocity.y) / 18);
+    const velocityLength = Math.max(1, Math.hypot(state.velocity.x, state.velocity.y));
+    const glowX = activePosition.x + (state.velocity.x / velocityLength) * (3 + speed * 4);
+    const glowY = activePosition.y + (state.velocity.y / velocityLength) * (3 + speed * 4);
+    const halo = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, 34 + speed * 10);
+    halo.addColorStop(0, colorWithAlpha("var(--accent)", 0.26 * fade));
+    halo.addColorStop(0.58, colorWithAlpha("var(--accent-strong)", 0.1 * fade));
+    halo.addColorStop(1, colorWithAlpha("var(--accent-strong)", 0));
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(glowX, glowY, 34 + speed * 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    state.neighborIds.forEach((nodeId) => {
+      const position = getDomPosition(nodeId);
+      if (!position) return;
+      const neighborGlow = ctx.createRadialGradient(position.x, position.y, 0, position.x, position.y, 22);
+      neighborGlow.addColorStop(0, colorWithAlpha("var(--accent)", 0.1 * fade));
+      neighborGlow.addColorStop(1, colorWithAlpha("var(--accent)", 0));
+      ctx.fillStyle = neighborGlow;
+      ctx.beginPath();
+      ctx.arc(position.x, position.y, 22, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    [...state.edgeIds].forEach((edgeId, index) => {
+      const edge = edgeMapRef.current.get(edgeId);
+      if (!edge) return;
+      const from = getDomPosition(edge.from);
+      const to = getDomPosition(edge.to);
+      if (!from || !to) return;
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const bend = Math.min(18, distance * 0.07) * (index % 2 === 0 ? 1 : -1);
+      const controlX = (from.x + to.x) / 2 + (-dy / distance) * bend;
+      const controlY = (from.y + to.y) / 2 + (dx / distance) * bend;
+      ctx.strokeStyle = colorWithAlpha("var(--accent)", 0.44 * fade);
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.quadraticCurveTo(controlX, controlY, to.x, to.y);
+      ctx.stroke();
+    });
+
+    return true;
+  }
+
   function drawOverlay(now: number, width: number, height: number, dpr: number) {
     const canvas = overlayCanvasRef.current;
     const network = networkRef.current;
@@ -481,6 +689,8 @@ export default function KnowledgeGraph({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
+
+    if (drawDragFeedback(ctx, now, width, height)) return;
 
     const graphData = graphDataRef.current;
     const visibleNodes = nodesRef.current;
@@ -503,9 +713,8 @@ export default function KnowledgeGraph({
 
     const activeId = hoveredNodeRef.current ?? selectedRef.current;
     if (activeId) {
-      const neighborIds = getNeighborIds(activeId, graphData.edges);
       const activeEdges = graphData.edges
-        .filter((edge) => edge.from === activeId || edge.to === activeId || (neighborIds.has(edge.from) && neighborIds.has(edge.to)))
+        .filter((edge) => edge.from === activeId || edge.to === activeId)
         .slice(0, 20);
 
       activeEdges.forEach((edge, index) => {
@@ -826,6 +1035,7 @@ export default function KnowledgeGraph({
     startVisualLoop();
 
     network.on("hoverNode", (params) => {
+      if (draggingNodeRef.current) return;
       const id = String(params.node);
       if (hoveredNodeRef.current === id) return;
       hoveredNodeRef.current = id;
@@ -833,6 +1043,7 @@ export default function KnowledgeGraph({
     });
 
     network.on("blurNode", () => {
+      if (draggingNodeRef.current) return;
       hoveredNodeRef.current = null;
       scheduleHoverPaint(draggingNodeRef.current ?? selectedRef.current);
     });
@@ -844,6 +1055,13 @@ export default function KnowledgeGraph({
       draggingNodeRef.current = id;
       freezePhysics();
       hoveredNodeRef.current = id;
+      beginDragVisual(id);
+    });
+
+    network.on("dragging", (params) => {
+      const id = params.nodes?.[0] ? String(params.nodes[0]) : draggingNodeRef.current;
+      if (!id) return;
+      trackDragMotion(id);
     });
 
     network.on("dragEnd", (params) => {
@@ -852,6 +1070,7 @@ export default function KnowledgeGraph({
       const position = network.getPositions([id])[id];
       if (position) nodesRef.current?.update({ id, x: position.x, y: position.y, fixed: false });
       schedulePositionSave(id);
+      finishDragVisual(id);
       draggingNodeRef.current = null;
       hoveredNodeRef.current = null;
     });
