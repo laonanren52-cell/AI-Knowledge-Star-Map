@@ -245,6 +245,7 @@ export default function KnowledgeGraph({
   const onDeleteEdgeRef = useRef(onDeleteEdge);
   const onToggleNodeFixedRef = useRef(onToggleNodeFixed);
   const onUpdateNodePositionsRef = useRef(onUpdateNodePositions);
+  const canEditRef = useRef(canEdit);
   const graphLayoutModeRef = useRef<GraphLayoutMode>(graphLayoutMode);
   const relationEditModeRef = useRef(relationEditMode);
   const firstDataSyncRef = useRef(true);
@@ -273,6 +274,31 @@ export default function KnowledgeGraph({
     if (!network) return;
     network.stopSimulation();
     network.setOptions({ physics: false });
+  }
+
+  function applyInteractionMode() {
+    const network = networkRef.current;
+    const nodes = nodesRef.current;
+    if (!network) return;
+
+    network.setOptions({
+      interaction: {
+        dragNodes: canEditRef.current,
+        dragView: graphLayoutModeRef.current !== "free",
+      },
+    });
+
+    if (graphLayoutModeRef.current === "free" || graphLayoutModeRef.current === "stable") {
+      // Persisted pins remain explicit; unpinned nodes stay freely draggable.
+      network.stopSimulation();
+      network.setOptions({ physics: { enabled: false } });
+      nodes?.update(
+        graphDataRef.current.nodes.map((node) => ({
+          id: node.id,
+          fixed: node.fixed ? { x: true, y: true } : false,
+        })),
+      );
+    }
   }
 
   function scheduleFit(delay = 120) {
@@ -554,7 +580,7 @@ export default function KnowledgeGraph({
 
     if (!activeId || !activeNodeVisible) {
       const searchHits = new Set(searchNodes(graphData.nodes, searchQueryRef.current.trim()).map((node) => node.id));
-      nodes.update(graphData.nodes.map((node) => toVisNode(node, false, false, false, {}, searchHits.has(node.id), graphLayoutModeRef.current === "auto")));
+      nodes.update(graphData.nodes.map((node) => toVisNode(node, false, false, false, {}, searchHits.has(node.id), true)));
       edges.update(graphData.edges.map((edge) => toVisEdge(edge, edge.id === selectedEdgeRef.current)));
       return;
     }
@@ -568,7 +594,7 @@ export default function KnowledgeGraph({
           sizeDelta: node.id === activeId ? 0.8 : 0,
           shadowScale: node.id === activeId ? 1.35 : 1,
           showLabel: node.id === activeId || relatedIds.has(node.id),
-        }, searchHits.has(node.id), graphLayoutModeRef.current === "auto"),
+        }, searchHits.has(node.id), true),
       ),
     );
     edges.update(
@@ -592,13 +618,15 @@ export default function KnowledgeGraph({
     });
   }
 
-  function syncDataSets(nextData: GraphData, hidden = false) {
+  function syncDataSets(nextData: GraphData, previousData: GraphData, hidden = false) {
     const nodes = nodesRef.current;
     const edges = edgesRef.current;
     if (!nodes || !edges) return;
 
     const nextNodeIds = new Set(nextData.nodes.map((node) => node.id));
     const nextEdgeIds = new Set(nextData.edges.map((edge) => edge.id));
+    const previousNodes = new Map(previousData.nodes.map((node) => [node.id, node]));
+    const previousEdges = new Map(previousData.edges.map((edge) => [edge.id, edge]));
     const currentNodeIds = new Set(nodes.getIds().map(String));
     const currentEdgeIds = new Set(edges.getIds().map(String));
     const opacity = hidden ? 0.04 : 0.92;
@@ -618,16 +646,18 @@ export default function KnowledgeGraph({
       return { ...node, x: viewPosition.x + (column - 1.5) * (72 / scale), y: viewPosition.y + (row - 1) * (72 / scale) };
     });
 
-    nodes.update(
-      positionedNodes.map((node) =>
+    const changedNodes = positionedNodes.filter((node) => !currentNodeIds.has(node.id) || previousNodes.get(node.id) !== node);
+    const changedEdges = nextData.edges.filter((edge) => !currentEdgeIds.has(edge.id) || previousEdges.get(edge.id) !== edge);
+
+    if (changedNodes.length > 0) nodes.update(
+      changedNodes.map((node) =>
         toVisNode(node, node.id === selectedRef.current, false, !currentNodeIds.has(node.id), {
           opacity,
           shadowScale: hidden ? 0.25 : 1,
-        }, false, graphLayoutModeRef.current === "auto"),
+        }, false, true),
       ),
     );
-    edges.update(nextData.edges.map((edge) => toVisEdge(edge, false, false, hidden ? 0.08 : 1)));
-    if (!hidden) paintGraph(nextNodeIds.has(selectedRef.current ?? "") ? selectedRef.current : null);
+    if (changedEdges.length > 0) edges.update(changedEdges.map((edge) => toVisEdge(edge, edge.id === selectedEdgeRef.current, false, hidden ? 0.08 : 1)));
   }
 
   useEffect(() => {
@@ -671,8 +701,13 @@ export default function KnowledgeGraph({
   }, [onUpdateNodePositions]);
 
   useEffect(() => {
+    canEditRef.current = canEdit;
+    applyInteractionMode();
+  }, [canEdit]);
+
+  useEffect(() => {
     graphLayoutModeRef.current = graphLayoutMode;
-    if (graphLayoutMode === "free" || graphLayoutMode === "stable") freezePhysics();
+    if (graphLayoutMode === "free" || graphLayoutMode === "stable") applyInteractionMode();
     paintGraph(selectedRef.current);
   }, [graphLayoutMode]);
 
@@ -724,7 +759,7 @@ export default function KnowledgeGraph({
         toVisNode(node, node.id === selectedRef.current, true, true, {
           opacity: 0.04,
           shadowScale: 0.2,
-        }, false, graphLayoutModeRef.current === "auto"),
+        }, false, true),
       ),
     );
     const visEdges = new DataSet<VisEdgeItem>(initialData.edges.map((edge) => toVisEdge(edge, false, false, 0.08)));
@@ -786,6 +821,7 @@ export default function KnowledgeGraph({
     );
 
     networkRef.current = network;
+    applyInteractionMode();
     syncCanvasSizes();
     startVisualLoop();
 
@@ -802,29 +838,22 @@ export default function KnowledgeGraph({
     });
 
     network.on("dragStart", (params) => {
-      if (!canEdit) return;
+      if (!canEditRef.current) return;
       const id = params.nodes?.[0] ? String(params.nodes[0]) : null;
       if (!id) return;
       draggingNodeRef.current = id;
       freezePhysics();
       hoveredNodeRef.current = id;
-      paintGraph(id);
-    });
-
-    network.on("dragging", (params) => {
-      const id = params.nodes?.[0] ? String(params.nodes[0]) : draggingNodeRef.current;
-      if (!id || hoveredNodeRef.current === id) return;
-      hoveredNodeRef.current = id;
-      scheduleHoverPaint(id);
     });
 
     network.on("dragEnd", (params) => {
       const id = params.nodes?.[0] ? String(params.nodes[0]) : draggingNodeRef.current;
       if (!id) return;
+      const position = network.getPositions([id])[id];
+      if (position) nodesRef.current?.update({ id, x: position.x, y: position.y, fixed: false });
       schedulePositionSave(id);
       draggingNodeRef.current = null;
       hoveredNodeRef.current = null;
-      paintGraph(selectedRef.current);
     });
 
     network.on("click", (params) => {
@@ -846,7 +875,7 @@ export default function KnowledgeGraph({
       onSelectNodeRef.current(node);
       paintGraph(id);
       if (id && node) {
-        if (relationEditModeRef.current && canEdit) onRelationNodeClickRef.current?.(node);
+        if (relationEditModeRef.current && canEditRef.current) onRelationNodeClickRef.current?.(node);
         addRipple(id);
       }
     });
@@ -936,10 +965,11 @@ export default function KnowledgeGraph({
       return;
     }
 
+    const previousData = graphDataRef.current;
     graphDataRef.current = data;
     nodeMapRef.current = new Map(data.nodes.map((node) => [node.id, node]));
     edgeMapRef.current = new Map(data.edges.map((edge) => [edge.id, edge]));
-    syncDataSets(data);
+    syncDataSets(data, previousData);
   }, [data]);
 
   useEffect(() => {
@@ -1102,7 +1132,13 @@ export default function KnowledgeGraph({
       )}
       <GraphLegend />
       <div className="graph-corner-note pointer-events-none absolute right-5 top-5 z-20 rounded-2xl border border-[var(--border-subtle)] px-4 py-3 text-xs text-[var(--text-muted)] backdrop-blur-xl">
-        {relationEditMode ? "关系编辑模式 · 依次点击两个节点" : `${graphLayoutMode === "free" ? "自由布局" : graphLayoutMode === "auto" ? "自动布局" : "稳定布局"} · 动态光效 · 双击局部图谱`}
+        {relationEditMode
+          ? "关系编辑模式 · 依次点击两个节点"
+          : graphLayoutMode === "free"
+            ? "自由布局 · 节点可自由拖动，位置会自动保存"
+            : graphLayoutMode === "auto"
+              ? "自动布局 · 仅在重置时重新计算"
+              : "稳定布局 · 节点位置保持不变"}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import GraphSidebar from "../components/graph/GraphSidebar";
 import KnowledgeGraph from "../components/graph/KnowledgeGraph";
 import NodeDetailPanel from "../components/graph/NodeDetailPanel";
@@ -65,6 +65,8 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
   const [layoutMode, setLayoutMode] = useState<GraphLayoutMode>("stable");
   const [layoutCommand, setLayoutCommand] = useState<{ type: "save" | "center" | "reset" | "restore"; version: number } | null>(null);
   const [toolDrawerOpen, setToolDrawerOpen] = useState(false);
+  const toolDrawerRef = useRef<HTMLDivElement | null>(null);
+  const toolDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const baseGraph = state.graph;
   const selectedDocumentIdForFilter = quickFilter === "selectedDocument" ? selectedNode?.sourceDocumentIds?.[0] : undefined;
@@ -106,6 +108,28 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
     const nextEdge = baseGraph.edges.find((edge) => edge.id === selectedEdge.id) ?? null;
     setSelectedEdge(nextEdge);
   }, [baseGraph.edges, selectedEdge?.id]);
+
+  useEffect(() => {
+    if (!toolDrawerOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setToolDrawerOpen(false);
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const path = event.composedPath();
+      if (path.includes(toolDrawerRef.current as EventTarget) || path.includes(toolDrawerTriggerRef.current as EventTarget)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setToolDrawerOpen(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [toolDrawerOpen]);
 
   useEffect(() => {
     if (!search.trim()) return;
@@ -446,6 +470,10 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
     onOpenAssistant();
   }
 
+  const toolDrawerTop = toolDrawerOpen && typeof window !== "undefined" && toolDrawerTriggerRef.current
+    ? Math.min(toolDrawerTriggerRef.current.getBoundingClientRect().bottom + 12, Math.max(16, window.innerHeight - 320))
+    : 24;
+
   return (
     <div className="relative mx-auto max-w-[1680px] px-3 py-6 md:px-6 md:py-8 fade-in">
       <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
@@ -475,7 +503,14 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
           >
             {relationEditMode ? "关系编辑中" : "关系编辑模式"}
           </button>
-          <button type="button" onClick={() => setToolDrawerOpen((value) => !value)} className="btn-secondary shrink-0 px-3 py-2">
+          <button
+            ref={toolDrawerTriggerRef}
+            type="button"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => setToolDrawerOpen((value) => !value)}
+            aria-expanded={toolDrawerOpen}
+            className="btn-secondary relative z-50 shrink-0 px-3 py-2"
+          >
             {toolDrawerOpen ? "关闭工具" : "星图工具"}
           </button>
         </div>
@@ -533,7 +568,29 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
       </div>
 
       {toolDrawerOpen && (
-        <div className="absolute right-3 top-20 z-40 w-[min(92vw,420px)] rounded-3xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-glass backdrop-blur-xl md:right-6">
+        <>
+        <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-30 bg-[rgba(38,63,92,0.08)] backdrop-blur-[1px]" />
+        <div
+          ref={toolDrawerRef}
+          role="dialog"
+          aria-label="星图工具"
+          style={{ top: toolDrawerTop, maxHeight: `calc(100vh - ${toolDrawerTop + 16}px)` }}
+          className="fixed right-4 z-40 w-[min(92vw,430px)] overflow-y-auto rounded-3xl border border-[var(--border-subtle)] bg-[rgba(249,252,255,0.96)] p-4 shadow-glass backdrop-blur-2xl md:right-6"
+        >
+          <div className="mb-4 flex items-start justify-between gap-4 border-b border-[var(--border-subtle)] pb-3">
+            <div>
+              <h2 className="text-base font-semibold text-[var(--text-primary)]">星图工具</h2>
+              <p className="mt-1 text-xs text-[var(--text-faint)]">节点、布局与发布管理</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setToolDrawerOpen(false)}
+              aria-label="关闭星图工具"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border-subtle)] bg-[var(--surface)] text-xl leading-none text-[var(--text-muted)] transition hover:border-[var(--accent-border)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            >
+              ×
+            </button>
+          </div>
           <div className="grid gap-4">
             <section>
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">节点操作</h2>
@@ -570,6 +627,7 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
             </section>
           </div>
         </div>
+        </>
       )}
 
       <div className="graph-workspace-grid grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_300px] 2xl:grid-cols-[320px_minmax(680px,1fr)_360px]">
