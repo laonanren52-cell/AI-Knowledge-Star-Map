@@ -74,12 +74,25 @@ type SearchRipple = {
   duration: number;
 };
 
+type ClusterNodeState = {
+  id: string;
+  depth: 1 | 2;
+  start: { x: number; y: number };
+  current: { x: number; y: number };
+  velocity: { x: number; y: number };
+  restVector: { x: number; y: number };
+  restDistance: number;
+  followStrength: number;
+};
+
 type DragVisualState = {
   nodeId: string;
   neighborIds: Set<string>;
   edgeIds: Set<string>;
   viewPosition: { x: number; y: number };
   scale: number;
+  rootStart: { x: number; y: number };
+  clusterNodes: ClusterNodeState[];
   lastDomPosition?: { x: number; y: number };
   velocity: { x: number; y: number };
   phase: "dragging" | "settling";
@@ -271,6 +284,7 @@ export default function KnowledgeGraph({
   const ripplesRef = useRef<SearchRipple[]>([]);
   const draggingNodeRef = useRef<string | null>(null);
   const dragVisualRef = useRef<DragVisualState | null>(null);
+  const clusterFrameRef = useRef<number | null>(null);
   const positionSaveTimerRef = useRef<number | null>(null);
   const pendingPositionSavesRef = useRef(new Map<string, { id: string; x: number; y: number; fixed?: boolean; layoutMode?: GraphLayoutMode; manualPosition?: boolean }>());
   const layoutSnapshotRef = useRef(new Map<string, { id: string; x: number; y: number; fixed?: boolean; layoutMode?: GraphLayoutMode; manualPosition?: boolean }>());
@@ -335,26 +349,15 @@ export default function KnowledgeGraph({
     });
   }
 
-  function schedulePositionSave(nodeId: string) {
-    const network = networkRef.current;
-    if (!network || !onUpdateNodePositionsRef.current) return;
-    const position = network.getPositions([nodeId])[nodeId];
-    if (!position) return;
-    const node = nodeMapRef.current.get(nodeId);
-    pendingPositionSavesRef.current.set(nodeId, {
-      id: nodeId,
-      x: position.x,
-      y: position.y,
-      fixed: node?.fixed ?? false,
-      layoutMode: graphLayoutModeRef.current,
-      manualPosition: true,
-    });
+  function schedulePositionSave(positions: Array<{ id: string; x: number; y: number; fixed?: boolean; layoutMode?: GraphLayoutMode; manualPosition?: boolean }>) {
+    if (!onUpdateNodePositionsRef.current || positions.length === 0) return;
+    positions.forEach((position) => pendingPositionSavesRef.current.set(position.id, position));
     clearTimer(positionSaveTimerRef);
     positionSaveTimerRef.current = window.setTimeout(() => {
-      const positions = [...pendingPositionSavesRef.current.values()];
+      const pendingPositions = [...pendingPositionSavesRef.current.values()];
       pendingPositionSavesRef.current.clear();
-      onUpdateNodePositionsRef.current?.(positions);
-    }, 420);
+      onUpdateNodePositionsRef.current?.(pendingPositions);
+    }, 80);
   }
 
   function readCurrentPositions(layoutMode = graphLayoutModeRef.current, manualPosition = true) {
@@ -524,6 +527,172 @@ export default function KnowledgeGraph({
     );
   }
 
+  function edgeStrength(edge: GraphEdge) {
+    return Math.max(0, Math.min(1, edge.weight ?? edge.confidence ?? 0.55));
+  }
+
+  function buildClusterNodes(rootId: string, rootStart: { x: number; y: number }) {
+    const network = networkRef.current;
+    if (!network) return [];
+
+    const graphData = graphDataRef.current;
+    const adjacency = new Map<string, GraphEdge[]>();
+    graphData.edges.forEach((edge) => {
+      adjacency.set(edge.from, [...(adjacency.get(edge.from) ?? []), edge]);
+      adjacency.set(edge.to, [...(adjacency.get(edge.to) ?? []), edge]);
+    });
+    const positions = network.getPositions(graphData.nodes.map((node) => node.id));
+    const distanceFromRoot = (nodeId: string) => {
+      const position = positions[nodeId];
+      return position ? Math.hypot(position.x - rootStart.x, position.y - rootStart.y) : Number.MAX_SAFE_INTEGER;
+    };
+    const otherEnd = (edge: GraphEdge, nodeId: string) => (edge.from === nodeId ? edge.to : edge.from);
+    const directById = new Map<string, { id: string; edge: GraphEdge }>();
+    (adjacency.get(rootId) ?? []).forEach((edge) => {
+      const id = otherEnd(edge, rootId);
+      if (!nodeMapRef.current.has(id) || !positions[id]) return;
+      const existing = directById.get(id);
+      if (!existing || edgeStrength(edge) > edgeStrength(existing.edge)) directById.set(id, { id, edge });
+    });
+    const directCandidates = [...directById.values()]
+      .sort((left, right) => edgeStrength(right.edge) - edgeStrength(left.edge) || distanceFromRoot(left.id) - distanceFromRoot(right.id));
+
+    const firstLevel = directCandidates.slice(0, 24);
+    const firstIds = new Set(firstLevel.map((candidate) => candidate.id));
+    const secondById = new Map<string, { id: string; edge: GraphEdge }>();
+    firstLevel.forEach(({ id: firstId }) => {
+      (adjacency.get(firstId) ?? []).forEach((edge) => {
+        const id = otherEnd(edge, firstId);
+        if (id === rootId || firstIds.has(id) || !nodeMapRef.current.has(id) || !positions[id]) return;
+        const existing = secondById.get(id);
+        if (!existing || edgeStrength(edge) > edgeStrength(existing.edge)) secondById.set(id, { id, edge });
+      });
+    });
+    const secondLevel = [...secondById.values()]
+      .sort((left, right) => edgeStrength(right.edge) - edgeStrength(left.edge) || distanceFromRoot(left.id) - distanceFromRoot(right.id))
+      .slice(0, 24);
+
+    const createState = (id: string, edge: GraphEdge, depth: 1 | 2): ClusterNodeState | null => {
+      const node = nodeMapRef.current.get(id);
+      const position = positions[id];
+      if (!node || !position || node.fixed) return null;
+      const restVector = { x: position.x - rootStart.x, y: position.y - rootStart.y };
+      const restDistance = Math.max(1, Math.hypot(restVector.x, restVector.y));
+      const weightedBase = depth === 1 ? 0.43 + edgeStrength(edge) * 0.25 : 0.12 + edgeStrength(edge) * 0.16;
+      const distanceAttenuation = 1 - Math.min(0.16, restDistance / 1800);
+      const followStrength = Math.max(depth === 1 ? 0.4 : 0.1, Math.min(depth === 1 ? 0.68 : 0.28, weightedBase * distanceAttenuation));
+      return {
+        id,
+        depth,
+        start: { x: position.x, y: position.y },
+        current: { x: position.x, y: position.y },
+        velocity: { x: 0, y: 0 },
+        restVector,
+        restDistance,
+        followStrength,
+      };
+    };
+
+    return [
+      ...firstLevel.map(({ id, edge }) => createState(id, edge, 1)),
+      ...secondLevel.map(({ id, edge }) => createState(id, edge, 2)),
+    ].filter((node): node is ClusterNodeState => Boolean(node));
+  }
+
+  function clampClusterTarget(rootPosition: { x: number; y: number }, rootDelta: { x: number; y: number }, node: ClusterNodeState) {
+    let targetX = node.start.x + rootDelta.x * node.followStrength;
+    let targetY = node.start.y + rootDelta.y * node.followStrength;
+    let offsetX = targetX - rootPosition.x;
+    let offsetY = targetY - rootPosition.y;
+    const offsetDistance = Math.max(1, Math.hypot(offsetX, offsetY));
+    const directionDot = offsetX * node.restVector.x + offsetY * node.restVector.y;
+    const maxDistance = node.restDistance + Math.max(node.depth === 1 ? 42 : 26, node.restDistance * (node.depth === 1 ? 0.55 : 0.34));
+
+    if (directionDot <= 0) {
+      const preservedDistance = Math.min(maxDistance, Math.max(node.restDistance * 0.58, offsetDistance));
+      offsetX = (node.restVector.x / node.restDistance) * preservedDistance;
+      offsetY = (node.restVector.y / node.restDistance) * preservedDistance;
+    } else if (offsetDistance > maxDistance) {
+      offsetX = (offsetX / offsetDistance) * maxDistance;
+      offsetY = (offsetY / offsetDistance) * maxDistance;
+    }
+
+    targetX = rootPosition.x + offsetX;
+    targetY = rootPosition.y + offsetY;
+    return { x: targetX, y: targetY };
+  }
+
+  function stepCluster(state: DragVisualState) {
+    const network = networkRef.current;
+    const nodes = nodesRef.current;
+    if (!network || !nodes) return 0;
+    const rootPosition = network.getPositions([state.nodeId])[state.nodeId];
+    if (!rootPosition) return 0;
+
+    const rootDelta = { x: rootPosition.x - state.rootStart.x, y: rootPosition.y - state.rootStart.y };
+    const spring = state.phase === "dragging" ? 0.22 : 0.16;
+    const damping = state.phase === "dragging" ? 0.72 : 0.64;
+    const updates: Array<{ id: string; x: number; y: number }> = [];
+    let residual = 0;
+
+    state.clusterNodes.forEach((node) => {
+      const target = clampClusterTarget(rootPosition, rootDelta, node);
+      const dx = target.x - node.current.x;
+      const dy = target.y - node.current.y;
+      node.velocity.x = (node.velocity.x + dx * spring) * damping;
+      node.velocity.y = (node.velocity.y + dy * spring) * damping;
+      node.current.x += node.velocity.x;
+      node.current.y += node.velocity.y;
+      residual = Math.max(residual, Math.hypot(dx, dy), Math.hypot(node.velocity.x, node.velocity.y));
+      if (Math.abs(node.velocity.x) > 0.08 || Math.abs(node.velocity.y) > 0.08) {
+        updates.push({ id: node.id, x: node.current.x, y: node.current.y });
+      }
+    });
+
+    if (updates.length > 0) nodes.update(updates);
+    return residual;
+  }
+
+  function completeClusterDrag(state: DragVisualState) {
+    if (dragVisualRef.current !== state) return;
+    const network = networkRef.current;
+    if (!network) return;
+    const participantIds = [state.nodeId, ...state.clusterNodes.map((node) => node.id)];
+    const positions = network.getPositions(participantIds);
+    const positionsToSave = participantIds.flatMap((id) => {
+      const position = positions[id];
+      const source = id === state.nodeId ? state.rootStart : state.clusterNodes.find((node) => node.id === id)?.start;
+      const graphNode = nodeMapRef.current.get(id);
+      if (!position || !source || !graphNode) return [];
+      const moved = Math.hypot(position.x - source.x, position.y - source.y);
+      if (id !== state.nodeId && moved < 2.5) return [];
+      return [{ id, x: position.x, y: position.y, fixed: graphNode.fixed ?? false, layoutMode: graphLayoutModeRef.current, manualPosition: true }];
+    });
+    schedulePositionSave(positionsToSave);
+    dragVisualRef.current = null;
+  }
+
+  function startClusterFrame() {
+    if (clusterFrameRef.current !== null) return;
+    const frame = (now: number) => {
+      clusterFrameRef.current = null;
+      const state = dragVisualRef.current;
+      if (!state) return;
+      const residual = stepCluster(state);
+      const settlingElapsed = state.phase === "settling" ? now - (state.releasedAt ?? now) : 0;
+      if (state.phase === "dragging" || settlingElapsed < 360 || residual > 0.7) {
+        if (state.phase === "settling" && settlingElapsed > 520) {
+          completeClusterDrag(state);
+          return;
+        }
+        clusterFrameRef.current = window.requestAnimationFrame(frame);
+        return;
+      }
+      completeClusterDrag(state);
+    };
+    clusterFrameRef.current = window.requestAnimationFrame(frame);
+  }
+
   function beginDragVisual(nodeId: string) {
     const network = networkRef.current;
     const nodes = nodesRef.current;
@@ -531,16 +700,23 @@ export default function KnowledgeGraph({
     const node = nodeMapRef.current.get(nodeId);
     if (!network || !nodes || !edges || !node) return;
 
+    if (clusterFrameRef.current !== null) window.cancelAnimationFrame(clusterFrameRef.current);
+    clusterFrameRef.current = null;
+
     const directEdges = graphDataRef.current.edges.filter((edge) => edge.from === nodeId || edge.to === nodeId);
     const neighborIds = new Set<string>();
     directEdges.forEach((edge) => neighborIds.add(edge.from === nodeId ? edge.to : edge.from));
     const viewPosition = network.getViewPosition();
+    const rootPosition = network.getPositions([nodeId])[nodeId];
+    if (!rootPosition) return;
     const state: DragVisualState = {
       nodeId,
       neighborIds,
       edgeIds: new Set(directEdges.map((edge) => edge.id)),
       viewPosition: { x: viewPosition.x, y: viewPosition.y },
       scale: network.getScale(),
+      rootStart: { x: rootPosition.x, y: rootPosition.y },
+      clusterNodes: buildClusterNodes(nodeId, rootPosition),
       lastDomPosition: getDomPosition(nodeId) ?? undefined,
       velocity: { x: 0, y: 0 },
       phase: "dragging",
@@ -565,6 +741,7 @@ export default function KnowledgeGraph({
     ]);
     edges.update(directEdges.map((edge) => toVisEdge(edge, true)));
     if (containerRef.current) containerRef.current.style.cursor = "grabbing";
+    startClusterFrame();
   }
 
   function trackDragMotion(nodeId: string) {
@@ -581,6 +758,7 @@ export default function KnowledgeGraph({
       };
     }
     state.lastDomPosition = position;
+    startClusterFrame();
   }
 
   function finishDragVisual(nodeId: string) {
@@ -597,6 +775,7 @@ export default function KnowledgeGraph({
 
     state.phase = "settling";
     state.releasedAt = performance.now();
+    startClusterFrame();
   }
 
   function drawDragFeedback(ctx: CanvasRenderingContext2D, now: number, width: number, height: number) {
@@ -605,7 +784,6 @@ export default function KnowledgeGraph({
 
     const releaseProgress = state.phase === "settling" ? Math.min(1, (now - (state.releasedAt ?? now)) / 220) : 0;
     if (releaseProgress >= 1) {
-      dragVisualRef.current = null;
       return false;
     }
 
@@ -1069,7 +1247,6 @@ export default function KnowledgeGraph({
       if (!id) return;
       const position = network.getPositions([id])[id];
       if (position) nodesRef.current?.update({ id, x: position.x, y: position.y, fixed: false });
-      schedulePositionSave(id);
       finishDragVisual(id);
       draggingNodeRef.current = null;
       hoveredNodeRef.current = null;
@@ -1161,6 +1338,7 @@ export default function KnowledgeGraph({
     return () => {
       if (hoverFrameRef.current !== null) window.cancelAnimationFrame(hoverFrameRef.current);
       if (visualFrameRef.current !== null) window.cancelAnimationFrame(visualFrameRef.current);
+      if (clusterFrameRef.current !== null) window.cancelAnimationFrame(clusterFrameRef.current);
       clearTimer(positionSaveTimerRef);
       clearTimer(fitTimerRef);
       clearTimer(resizeTimerRef);
