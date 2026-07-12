@@ -718,7 +718,8 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
             ...node,
             x: Math.round(position.x),
             y: Math.round(position.y),
-            fixed: position.fixed ?? node.fixed ?? true,
+            fixed: position.fixed ?? node.fixed ?? false,
+            pinnedByUser: node.pinnedByUser ?? false,
             layoutMode: position.layoutMode ?? node.layoutMode ?? "free",
             positionUpdatedAt: nowIso(),
             manualPosition: position.manualPosition ?? true,
@@ -738,7 +739,7 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
       graph: {
         nodes: state.graph.nodes.map((node) =>
           nodeWorkspaceId(node) === workspaceId && (!targetIds || targetIds.has(node.id))
-            ? { ...node, fixed: action.fixed, layoutMode: action.fixed ? "free" : node.layoutMode, positionUpdatedAt: nowIso() }
+            ? { ...node, fixed: action.fixed, pinnedByUser: action.fixed, layoutMode: action.fixed ? "free" : node.layoutMode, positionUpdatedAt: nowIso() }
             : node,
         ),
         edges: state.graph.edges,
@@ -752,7 +753,7 @@ function knowledgeReducer(state: KnowledgeState, action: KnowledgeAction): Knowl
       ...state,
       graph: compactGraph({
         nodes: state.graph.nodes.map((node) =>
-          nodeWorkspaceId(node) === workspaceId ? { ...node, x: undefined, y: undefined, fixed: false, layoutMode: "auto", positionUpdatedAt: nowIso() } : node,
+          nodeWorkspaceId(node) === workspaceId ? { ...node, x: undefined, y: undefined, fixed: false, pinnedByUser: false, layoutMode: "auto", positionUpdatedAt: nowIso() } : node,
         ),
         edges: state.graph.edges,
       }),

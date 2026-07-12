@@ -85,6 +85,16 @@ type ClusterNodeState = {
   followStrength: number;
 };
 
+type ClusterDiagnostics = {
+  rootNodeId: string;
+  directCandidates: number;
+  firstLevel: number;
+  secondLevel: number;
+  clusterNodes: number;
+  skippedByLegacyFixed: number;
+  skippedByUserPinned: number;
+};
+
 type DragVisualState = {
   nodeId: string;
   neighborIds: Set<string>;
@@ -195,7 +205,7 @@ function toVisNode(
       x: 0,
       y: 0,
     },
-    fixed: respectFixed && node.fixed ? { x: true, y: true } : false,
+    fixed: respectFixed && node.pinnedByUser ? { x: true, y: true } : false,
   };
 }
 
@@ -316,13 +326,13 @@ export default function KnowledgeGraph({
     });
 
     if (graphLayoutModeRef.current === "free" || graphLayoutModeRef.current === "stable") {
-      // Persisted pins remain explicit; unpinned nodes stay freely draggable.
+      // Only deliberate user pins block dragging; stable-layout coordinates stay movable.
       network.stopSimulation();
       network.setOptions({ physics: { enabled: false } });
       nodes?.update(
         graphDataRef.current.nodes.map((node) => ({
           id: node.id,
-          fixed: node.fixed ? { x: true, y: true } : false,
+          fixed: node.pinnedByUser ? { x: true, y: true } : false,
         })),
       );
     }
@@ -367,7 +377,7 @@ export default function KnowledgeGraph({
     return graphDataRef.current.nodes.flatMap((node) => {
       const position = positions[node.id];
       return position
-        ? [{ id: node.id, x: position.x, y: position.y, fixed: node.fixed ?? false, layoutMode, manualPosition }]
+        ? [{ id: node.id, x: position.x, y: position.y, fixed: node.pinnedByUser ?? false, layoutMode, manualPosition }]
         : [];
     });
   }
@@ -533,7 +543,12 @@ export default function KnowledgeGraph({
 
   function buildClusterNodes(rootId: string, rootStart: { x: number; y: number }) {
     const network = networkRef.current;
-    if (!network) return [];
+    if (!network) {
+      return {
+        nodes: [],
+        diagnostics: { rootNodeId: rootId, directCandidates: 0, firstLevel: 0, secondLevel: 0, clusterNodes: 0, skippedByLegacyFixed: 0, skippedByUserPinned: 0 },
+      };
+    }
 
     const graphData = graphDataRef.current;
     const adjacency = new Map<string, GraphEdge[]>();
@@ -572,10 +587,15 @@ export default function KnowledgeGraph({
       .sort((left, right) => edgeStrength(right.edge) - edgeStrength(left.edge) || distanceFromRoot(left.id) - distanceFromRoot(right.id))
       .slice(0, 24);
 
+    let skippedByUserPinned = 0;
     const createState = (id: string, edge: GraphEdge, depth: 1 | 2): ClusterNodeState | null => {
       const node = nodeMapRef.current.get(id);
       const position = positions[id];
-      if (!node || !position || node.fixed) return null;
+      if (!node || !position) return null;
+      if (node.pinnedByUser) {
+        skippedByUserPinned += 1;
+        return null;
+      }
       const restVector = { x: position.x - rootStart.x, y: position.y - rootStart.y };
       const restDistance = Math.max(1, Math.hypot(restVector.x, restVector.y));
       const weightedBase = depth === 1 ? 0.43 + edgeStrength(edge) * 0.25 : 0.12 + edgeStrength(edge) * 0.16;
@@ -593,10 +613,22 @@ export default function KnowledgeGraph({
       };
     };
 
-    return [
+    const nodes = [
       ...firstLevel.map(({ id, edge }) => createState(id, edge, 1)),
       ...secondLevel.map(({ id, edge }) => createState(id, edge, 2)),
     ].filter((node): node is ClusterNodeState => Boolean(node));
+    return {
+      nodes,
+      diagnostics: {
+        rootNodeId: rootId,
+        directCandidates: directCandidates.length,
+        firstLevel: firstLevel.length,
+        secondLevel: secondLevel.length,
+        clusterNodes: nodes.length,
+        skippedByLegacyFixed: 0,
+        skippedByUserPinned,
+      },
+    };
   }
 
   function clampClusterTarget(rootPosition: { x: number; y: number }, rootDelta: { x: number; y: number }, node: ClusterNodeState) {
@@ -666,7 +698,7 @@ export default function KnowledgeGraph({
       if (!position || !source || !graphNode) return [];
       const moved = Math.hypot(position.x - source.x, position.y - source.y);
       if (id !== state.nodeId && moved < 2.5) return [];
-      return [{ id, x: position.x, y: position.y, fixed: graphNode.fixed ?? false, layoutMode: graphLayoutModeRef.current, manualPosition: true }];
+      return [{ id, x: position.x, y: position.y, fixed: graphNode.pinnedByUser ?? false, layoutMode: graphLayoutModeRef.current, manualPosition: true }];
     });
     schedulePositionSave(positionsToSave);
     dragVisualRef.current = null;
@@ -709,6 +741,7 @@ export default function KnowledgeGraph({
     const viewPosition = network.getViewPosition();
     const rootPosition = network.getPositions([nodeId])[nodeId];
     if (!rootPosition) return;
+    const cluster = buildClusterNodes(nodeId, rootPosition);
     const state: DragVisualState = {
       nodeId,
       neighborIds,
@@ -716,13 +749,19 @@ export default function KnowledgeGraph({
       viewPosition: { x: viewPosition.x, y: viewPosition.y },
       scale: network.getScale(),
       rootStart: { x: rootPosition.x, y: rootPosition.y },
-      clusterNodes: buildClusterNodes(nodeId, rootPosition),
+      clusterNodes: cluster.nodes,
       lastDomPosition: getDomPosition(nodeId) ?? undefined,
       velocity: { x: 0, y: 0 },
       phase: "dragging",
     };
 
     dragVisualRef.current = state;
+    if (import.meta.env.DEV) {
+      console.info("[zhimai:graph-cluster]", cluster.diagnostics);
+      if (cluster.diagnostics.clusterNodes === 0 && cluster.diagnostics.directCandidates > 0) {
+        console.warn("[zhimai:graph-cluster] 关联节点未进入可移动关系簇", cluster.diagnostics);
+      }
+    }
     nodes.update([
       toVisNode(
         node,
@@ -1124,7 +1163,14 @@ export default function KnowledgeGraph({
     if (layoutCommand.type === "restore") {
       const snapshot = [...layoutSnapshotRef.current.values()];
       if (snapshot.length === 0) return;
-      nodesRef.current?.update(snapshot.map((position) => ({ id: position.id, x: position.x, y: position.y, fixed: position.fixed ?? false })));
+      nodesRef.current?.update(snapshot.map((position) => ({
+        id: position.id,
+        x: position.x,
+        y: position.y,
+        // Legacy snapshots may contain fixed=true from the stable layout. Only
+        // a deliberate user pin should prevent future local cluster dragging.
+        fixed: nodeMapRef.current.get(position.id)?.pinnedByUser ? { x: true, y: true } : false,
+      })));
       onUpdateNodePositionsRef.current?.(snapshot);
       paintGraph(selectedRef.current);
       return;
@@ -1452,17 +1498,16 @@ export default function KnowledgeGraph({
                 onClick={() => {
                   if (contextMenu.node) {
                     const position = networkRef.current?.getPositions([contextMenu.node.id])[contextMenu.node.id];
-                    if (position && onUpdateNodePositionsRef.current) {
-                      onUpdateNodePositionsRef.current([{ id: contextMenu.node.id, x: position.x, y: position.y, fixed: !contextMenu.node.fixed, layoutMode: !contextMenu.node.fixed ? "free" : graphLayoutModeRef.current }]);
-                    } else {
-                      onToggleNodeFixedRef.current?.(contextMenu.node, !contextMenu.node.fixed);
+                    if (onToggleNodeFixedRef.current) onToggleNodeFixedRef.current(contextMenu.node, !contextMenu.node.pinnedByUser);
+                    else if (position && onUpdateNodePositionsRef.current) {
+                      onUpdateNodePositionsRef.current([{ id: contextMenu.node.id, x: position.x, y: position.y, fixed: !contextMenu.node.pinnedByUser, layoutMode: !contextMenu.node.pinnedByUser ? "free" : graphLayoutModeRef.current }]);
                     }
                   }
                   setContextMenu(null);
                 }}
                 className="w-full rounded-xl px-3 py-2 text-left text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
               >
-                {contextMenu.node.fixed ? "取消固定" : "固定位置"}
+                {contextMenu.node.pinnedByUser ? "取消固定" : "固定位置"}
               </button>
               <button
                 type="button"

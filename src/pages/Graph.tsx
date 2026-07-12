@@ -297,6 +297,7 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
       x: nodeDraft.x,
       y: nodeDraft.y,
       fixed: nodeDraft.fixed,
+      pinnedByUser: nodeDraft.pinnedByUser,
       layoutMode: nodeDraft.layoutMode,
     };
     if (nodeDraft.id) updateNode(nodeDraft.id, node);
@@ -706,7 +707,7 @@ export default function Graph({ onOpenAssistant }: GraphProps) {
           onDeleteEdge={handleDeleteEdge}
           onToggleNodeFixed={(node, fixed) => {
             if (!canEditCurrentWorkspace) return;
-            updateNodePositions([{ id: node.id, x: node.x ?? 0, y: node.y ?? 0, fixed, layoutMode: fixed ? "free" : layoutMode }]);
+            setNodesFixed([node.id], fixed);
             setGeneratedToast(fixed ? "节点位置已固定。" : "节点已取消固定。");
             window.setTimeout(() => setGeneratedToast(null), 1800);
           }}

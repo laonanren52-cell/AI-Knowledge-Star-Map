@@ -37,6 +37,7 @@ export interface GraphNode {
   x?: number;
   y?: number;
   fixed?: boolean;
+  pinnedByUser?: boolean;
   layoutMode?: GraphLayoutMode;
   positionUpdatedAt?: string;
   positionUpdatedBy?: string;
